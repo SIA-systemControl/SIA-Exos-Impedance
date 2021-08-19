@@ -1,0 +1,15 @@
+Issue #1 initial position doesn't assign to desired case, i.e, there exist a large of distance between link and motor at initial instance.
+Solution:
+    (A) Calibrating encoder counts of spring(link) and motor.
+    (B) Calibrating the polarity of encoders by OBLAC program, check if there exist some mistake of polarity
+    
+Issue #2 At the beginning of tracking impendance, there exists some noise when running at first.
+Solution:
+    the noise comes from the derivation between desired torque and actual torque. There are several problme about springs:
+    (A) the percision of identification stiffness of springs. Here I used the constant stiffness without damping of deformation.
+    (B) the installation of springs in each joint. the actual zero-torque-points are unknown, since I didn't particapate the assembly of mechanics of Exoskeleton. Therefore, for next Exoskeleton, I will calibrate the springs' zmps during the installation.
+    
+Issue #3 It seems that the performance of tracking at Hip joint doesn't well as other.
+Solution:
+    That it is. I think the reason of this situation may be the dynamics of Hip doesn't well as others. the wise way to handle this issue may be identified Hip-link indepedanly before installation. But the mechanics design limited the division of linkage.
+    
