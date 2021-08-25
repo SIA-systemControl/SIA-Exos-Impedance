@@ -75,7 +75,7 @@
 #define STATUS_SERVO_ENABLE_BIT (0x04)
 
 #define joint_num 6
-#define active_num 3
+#define active_num 6
 
 // EtherCAT port Mapping
 #define l_hip   2
@@ -84,6 +84,8 @@
 #define r_hip   3
 #define r_knee  4
 #define r_ankle 5
+
+/** ------ Left Part ----- **/
 
 #define left_hip_init_motor_pos -141303482
 #define left_hip_init_spring_pos 13334
@@ -95,32 +97,31 @@
 #define left_ankle_init_motor_pos -166492793
 #define left_ankle_init_link_pos 82827
 
-#define right_hip_init_motor_pos -804147103
-#define right_hip_init_spring_pos -23709
+/** ------ Right Part ----- **/
 
-#define right_knee_init_motor_pos 264028555
-#define right_knee_init_spring_pos 49077
+#define right_hip_init_motor_pos -804194886
+#define right_hip_init_spring_pos -24107
 
-/**  Ankle range = (35,-45)
- *  Velocity is inverted polarity
- * */
-#define right_ankle_init_motor_pos -123025140
-#define right_ankle_init_spring_pos 179678
+#define right_knee_init_motor_pos 263923337
+#define right_knee_init_spring_pos 48783
+
+#define right_ankle_init_motor_pos 123025140
+#define right_ankle_init_link_pos 179693
 
 #ifdef Tracking_Impendance
-    #define left_hip_id_init_rad 0
-    #define left_knee_id_init_rad -0.1
-    #define left_ankle_id_init_rad 0.05
+#define left_hip_id_init_rad 0
+#define left_knee_id_init_rad -0.1
+#define left_ankle_id_init_rad 0.05
 #endif
 
 #ifdef Drag_Impendance
-    #define left_hip_id_init_rad -0.05
-    #define left_knee_id_init_rad 0
-    #define left_ankle_id_init_rad 0
+#define left_hip_id_init_rad -0.05
+#define left_knee_id_init_rad 0
+#define left_ankle_id_init_rad 0
 #endif
 
 #define right_hip_id_init_rad 0
-#define right_knee_id_init_rad -0.05
+#define right_knee_id_init_rad 0
 #define right_ankle_id_init_rad 0.05
 
 /**
@@ -145,7 +146,7 @@ static uint8_t *domainTx_pd = NULL;
 // length change with number of slave(s)
 static ec_slave_config_t *sc[joint_num];
 static ec_slave_config_state_t sc_state[joint_num] = {};
-
+static ec_sdo_request_t *sdo[joint_num];
 
 // hardware specification
 #define SynapticonSlave1 0,2 // 1st slave
@@ -155,7 +156,7 @@ static ec_slave_config_state_t sc_state[joint_num] = {};
 #define SynapticonSlave5 0,4 // 2ed slave
 #define SynapticonSlave6 0,5 // 3rd slave
 
-#define Synapticon  0x000022D2,0x00000201// vendor id + product id
+#define Synapticon  0x000022d2,0x00000201// vendor id + product id
 
 // EtherCAT state machine enum
 typedef enum _workingStatus {
@@ -163,7 +164,8 @@ typedef enum _workingStatus {
     sys_working_SAFE_MODE,
     sys_working_OP_MODE,
     sys_working_LINK_DOWN,
-    sys_working_WORK_STATUS
+    sys_working_WORK_STATUS,
+    sys_woring_INIT_Failed
 } workingStatus;
 
 typedef struct _GsysRunningParm {
@@ -183,6 +185,7 @@ typedef struct _GTaskFSM {
 GsysRunningParm gSysRunning;
 GTaskFSM gTaskFsm;
 
+int SERVE_OP = 0;
 int ecstate = 0;
 int reset_step = 0;
 
@@ -254,6 +257,9 @@ static struct {
     unsigned int digital_in2[joint_num];
     unsigned int digital_in3[joint_num];
     unsigned int digital_in4[joint_num];
+    /* Error Code */
+    unsigned int Error_code[joint_num];
+
 } offset;
 
 
@@ -316,6 +322,8 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
 
         {SynapticonSlave1, Synapticon, 0x230A, 0, &offset.second_position[l_hip]},
         {SynapticonSlave1, Synapticon, 0x230B, 0, &offset.second_velocity[l_hip]},
+        {SynapticonSlave1, Synapticon, 0x2401, 0, &offset.analog_in1[l_hip]},
+        {SynapticonSlave1, Synapticon, 0x603F, 0, &offset.Error_code[l_hip]},
 
         // slave - 2
         {SynapticonSlave2, Synapticon, 0x6041, 0, &offset.status_word[l_knee]},
@@ -326,6 +334,7 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
 
         {SynapticonSlave2, Synapticon, 0x230A, 0, &offset.second_position[l_knee]},
         {SynapticonSlave2, Synapticon, 0x230B, 0, &offset.second_velocity[l_knee]},
+        {SynapticonSlave2, Synapticon, 0x603F, 0, &offset.Error_code[l_knee]},
 
         // slave - 3
         {SynapticonSlave3, Synapticon, 0x6041, 0, &offset.status_word[l_ankle]},
@@ -336,6 +345,7 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
 
         {SynapticonSlave3, Synapticon, 0x230A, 0, &offset.second_position[l_ankle]},
         {SynapticonSlave3, Synapticon, 0x230B, 0, &offset.second_velocity[l_ankle]},
+        {SynapticonSlave3, Synapticon, 0x603F, 0, &offset.Error_code[l_ankle]},
 
         // slave - 4
         {SynapticonSlave4, Synapticon, 0x6041, 0, &offset.status_word[r_hip]},
@@ -346,6 +356,7 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
 
         {SynapticonSlave4, Synapticon, 0x230A, 0, &offset.second_position[r_hip]},
         {SynapticonSlave4, Synapticon, 0x230B, 0, &offset.second_velocity[r_hip]},
+        {SynapticonSlave4, Synapticon, 0x603F, 0, &offset.Error_code[r_hip]},
 
         // slave - 5
         {SynapticonSlave5, Synapticon, 0x6041, 0, &offset.status_word[r_knee]},
@@ -356,6 +367,7 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
 
         {SynapticonSlave5, Synapticon, 0x230A, 0, &offset.second_position[r_knee]},
         {SynapticonSlave5, Synapticon, 0x230B, 0, &offset.second_velocity[r_knee]},
+        {SynapticonSlave5, Synapticon, 0x603F, 0, &offset.Error_code[r_knee]},
 
         // slave - 6
         {SynapticonSlave6, Synapticon, 0x6041, 0, &offset.status_word[r_ankle]},
@@ -366,6 +378,7 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
 
         {SynapticonSlave6, Synapticon, 0x230A, 0, &offset.second_position[r_ankle]},
         {SynapticonSlave6, Synapticon, 0x230B, 0, &offset.second_velocity[r_ankle]},
+        {SynapticonSlave6, Synapticon, 0x603F, 0, &offset.Error_code[r_ankle]},
 //        {SynapticonSlave1, Synapticon, 0x2401, 0, &offset.analog_in1[0]},
 //        {SynapticonSlave2, Synapticon, 0x2401, 0, &offset.analog_in1[0]},
 //        {SynapticonSlave1, Synapticon, 0x2402, 0, &offset.analog_in2},
@@ -399,6 +412,8 @@ static ec_pdo_entry_info_t pdo_entries_Tx[] = {
         /* TxPdo 0x1A01 */
         {0x230A, 0x00, 32},  // Second position
         {0x230B, 0x00, 32},  // Second velocity
+        {0x2401, 0x00, 16},  // Analog Input 1
+        {0x603F, 0x00, 16}, // Error code
         {}
 };
 
@@ -411,7 +426,7 @@ static ec_pdo_info_t RxPDOs[] = {
 static ec_pdo_info_t TxPDOs[] = {
         /* TxPdo 0x1A00 */
         {0x1A00, 5, pdo_entries_Tx + 0},
-        {0x1A01, 2, pdo_entries_Tx + 5}
+        {0x1A01, 4, pdo_entries_Tx + 5}
 };
 
 /*
@@ -516,6 +531,8 @@ int configPDO() {
         std::cout << "Failed to config slave 6 PDOs" << std::endl;
         exit(EXIT_FAILURE);
     }
+
+//    sdo[l_ankle] = ecrt_slave_config_create_sdo_request(sc[l_ankle],0x3102,2,2);
 
     if (ecrt_domain_reg_pdo_entry_list(domainRx, domain_Rx_reg)) {
         std::cout << "PDO entry registration failed." << std::endl;
