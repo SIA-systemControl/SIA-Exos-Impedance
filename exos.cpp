@@ -265,11 +265,30 @@ void cyclic_task(double Kp, double Kd) {
                 int tmp = true;
                 for (int i = 0; i < active_num; i++) {
                     unsigned int cur_status = EC_READ_U16(domainTx_pd + offset.status_word[i]);
+                    unsigned int E_code = EC_READ_U16(domainTx_pd + offset.Error_code[i]);
 
                     if ((EC_READ_U16(domainTx_pd + offset.status_word[i]) & 0x6f) == 0x27)
                         std::cout << "Slave [" << i << "] Enable operation" << std::endl;
-                    else
+                    else{
                         std::cout << "Slave [" << i << "] not in Enable operation" << std::endl;
+                        std::cout << "Slave [" << i << "] State: "<< cur_status << std::endl;
+                        std::cout << "Slave [" << i << "] E-code: " << E_code << std::endl;
+                        switch (E_code) {
+                            case 0x7500:
+                                std::cout << " Communication Error." << std::endl;
+                                break;
+                            case 0x7300:
+                                std::cout << " Sensor Error(Maybe CRC)." << std::endl;
+                                break;
+                            case 0x2220:
+                                std::cout << "  Continuous over current" << std::endl;
+                                break;
+                            default:
+                                std::cout << " Other Error. (ref to datasheet)" << std::endl;
+                                break;
+                        }
+                    }
+
 
                     if ((EC_READ_U16(domainTx_pd + offset.status_word[i]) & (STATUS_SERVO_ENABLE_BIT)) == 0) {
                         tmp = false;
@@ -842,13 +861,13 @@ void cyclic_task(double Kp, double Kd) {
                         if (An_in > 200)
                             logic_1 = true;
 
-//                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_hip], CST);
-//                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_knee], CST);
-//                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_ankle], CST);
-//
-//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_hip], tau_dyn_thousand_1);
-//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
-//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
+                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_hip], CST);
+                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_knee], CST);
+                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_ankle], CST);
+
+                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_hip], tau_dyn_thousand_1);
+                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
+                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
 #ifdef Right_Part
 //                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_hip], CST);
 //                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CST);
