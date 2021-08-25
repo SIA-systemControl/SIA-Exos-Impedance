@@ -120,9 +120,9 @@
 #define left_ankle_id_init_rad 0
 #endif
 
-#define right_hip_id_init_rad 0
-#define right_knee_id_init_rad 0
-#define right_ankle_id_init_rad 0.05
+#define right_hip_id_init_rad 0.025
+#define right_knee_id_init_rad -0.113
+#define right_ankle_id_init_rad 0.035
 
 /**
  * Im3_r = 0.00006724
