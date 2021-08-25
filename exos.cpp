@@ -168,7 +168,6 @@ void cyclic_task(double Kp, double Kd) {
     if (gSysRunning.m_gWorkStatus == sys_working_POWER_ON)
         return;
 
-    // TODO: when cycle_count >= 90000 reset counting ( and stop )
     static int cycle_count = 0;
     cycle_count++;
 
@@ -217,17 +216,6 @@ void cyclic_task(double Kp, double Kd) {
                             for (int i = 0; i < active_num; i++) {
                                 int E_code = EC_READ_U16(domainTx_pd + offset.Error_code[i]);
 
-//                                if (E_code != 0) {
-//                                    std::cout << "[Error occured at slave: " << i << std::endl;
-//                                    std::cout << E_code << std::endl;
-//                                    std::cout << "===================" << std::endl;
-//                                    if (E_code == 0x7500) {
-//                                        std::cout << "Communication error." << std::endl;
-//                                        pause_to_continue();
-//                                    }
-//                                }
-
-
                                 if (E_code != 0 || (EC_READ_U16(domainTx_pd + offset.status_word[i]) & 0x0008)) {
                                     std::cout << "[Error occured at slave: " << i << std::endl;
                                     EC_WRITE_U16(domainRx_pd + offset.ctrl_word[i],
@@ -269,9 +257,9 @@ void cyclic_task(double Kp, double Kd) {
 
                     if ((EC_READ_U16(domainTx_pd + offset.status_word[i]) & 0x6f) == 0x27)
                         std::cout << "Slave [" << i << "] Enable operation" << std::endl;
-                    else{
+                    else {
                         std::cout << "Slave [" << i << "] not in Enable operation" << std::endl;
-                        std::cout << "Slave [" << i << "] State: "<< cur_status << std::endl;
+                        std::cout << "Slave [" << i << "] State: " << cur_status << std::endl;
                         std::cout << "Slave [" << i << "] E-code: " << E_code << std::endl;
                         switch (E_code) {
                             case 0x7500:
@@ -296,11 +284,11 @@ void cyclic_task(double Kp, double Kd) {
                         break;
                     }
                 }
-                    if (tmp) {
-                        ecstate = 0;
-                        gSysRunning.m_gWorkStatus = sys_working_WORK_STATUS;
-                        std::cout << "sys_working_WORK_STATUS" << std::endl;
-                    }
+                if (tmp) {
+                    ecstate = 0;
+                    gSysRunning.m_gWorkStatus = sys_working_WORK_STATUS;
+                    std::cout << "sys_working_WORK_STATUS" << std::endl;
+                }
             }
         }
             break;
@@ -464,6 +452,11 @@ void cyclic_task(double Kp, double Kd) {
                         std::cout << "vel of link-4: " << link_4_vel << std::endl;
                         std::cout << "vel of link-5: " << link_5_vel << std::endl;
                         std::cout << "vel of link-6: " << link_6_vel << std::endl;
+
+                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[l_ankle])
+                                  << std::endl;
+                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[l_ankle])
+                                  << std::endl;
 
 
                         int OP_mode = EC_READ_S8(domainTx_pd + offset.modes_of_operation_display[r_hip]);

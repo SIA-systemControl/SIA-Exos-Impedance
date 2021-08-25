@@ -94,8 +94,8 @@
 #define left_knee_init_spring_pos -3272
 
 /**  Ankle range = (35,-45)  */
-#define left_ankle_init_motor_pos -166492793
-#define left_ankle_init_link_pos 82827
+#define left_ankle_init_motor_pos -166115424
+#define left_ankle_init_link_pos 82820
 
 /** ------ Right Part ----- **/
 
@@ -111,7 +111,7 @@
 #ifdef Tracking_Impendance
 #define left_hip_id_init_rad 0
 #define left_knee_id_init_rad -0.1
-#define left_ankle_id_init_rad 0.05
+#define left_ankle_id_init_rad 0.0
 #endif
 
 #ifdef Drag_Impendance
