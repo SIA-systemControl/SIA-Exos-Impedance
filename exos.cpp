@@ -724,10 +724,13 @@ void cyclic_task(double Kp, double Kd) {
                                 0, 59.32, 0,
                                 0, 0, 30.23;
 
-                        Eigen::Vector3d B_l, K_l, B_r, K_r;
+                        Eigen::Vector3d M, B_l, K_l, B_r, K_r;
 #ifdef Tracking_Impendance
+                        K_l << 30, 30, 20;
+                        B_l << 0.4, 1.0, 0.4;
                         K_r << 50, 50, 20;
-                        B_r << 0.4, 0.8, 0.5;
+                        B_r << 0.4,0.8,0.5;
+
                         d4q_l << hip_ref_4th, knee_ref_4th, ankle_ref_4th;
                         d3q_l << hip_ref_3rd, knee_ref_3rd, ankle_ref_3rd;
                         ddq_l << hip_ref_acc, (knee_ref_acc), (ankle_ref_acc);
@@ -818,6 +821,7 @@ void cyclic_task(double Kp, double Kd) {
                         Eigen::Vector3d compensation_r;
                         compensation_r = right_SEA_dynamics.feedforward_dynamics(d4q_r, d3q_r, ddq_r, dq_r, q_r,
                                                                                  Ks_r);
+
                         compensation_r = 1.0 * compensation_r;
 
                         double r_hip_Impedance =
