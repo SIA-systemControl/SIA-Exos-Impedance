@@ -723,10 +723,12 @@ void cyclic_task(double Kp, double Kd) {
                                 0, 59.32, 0,
                                 0, 0, 30.23;
 
-                        Eigen::Vector3d M, B, K;
+                        Eigen::Vector3d M, B_l, K_l, B_r, K_r;
 #ifdef Tracking_Impendance
-                        K << 30, 30, 20;
-                        B << 0.4, 1.0, 0.4;
+                        K_l << 30, 30, 20;
+                        B_l << 0.4, 1.0, 0.4;
+                        K_r << 50, 50, 20;
+                        B_r << 0.4,0.8,0.5;
                         d4q_l << hip_ref_4th, knee_ref_4th, ankle_ref_4th;
                         d3q_l << hip_ref_3rd, knee_ref_3rd, ankle_ref_3rd;
                         ddq_l << hip_ref_acc, (knee_ref_acc), (ankle_ref_acc);
@@ -786,11 +788,11 @@ void cyclic_task(double Kp, double Kd) {
                         l_Ankle_pd.pid_set_params(0.5, 0, 3); // 0.45,3
 
                         double l_hip_Impedance =
-                                compensation_l(0) / transmission_hip + (B(0) * dq_e_l(0) + K(0) * q_e_l(0));
+                                compensation_l(0) / transmission_hip + (B_l(0) * dq_e_l(0) + K_l(0) * q_e_l(0));
                         double l_knee_Impedance =
-                                compensation_l(1) / transmission_knee + (B(1) * dq_e_l(1) + K(1) * q_e_l(1));
+                                compensation_l(1) / transmission_knee + (B_l(1) * dq_e_l(1) + K_l(1) * q_e_l(1));
                         double l_ankle_Impedance =
-                                compensation_l(2) / transmission_ankle + (B(2) * dq_e_l(2) + K(2) * q_e_l(2));
+                                compensation_l(2) / transmission_ankle + (B_l(2) * dq_e_l(2) + K_l(2) * q_e_l(2));
 
                         double l_hip_tau_spr = Ks_l(0, 0) * (lever_arm_1_rad - link_1_rad);
                         double l_knee_tau_spr = Ks_l(1, 1) * (lever_arm_2_rad - link_2_rad);
@@ -810,21 +812,21 @@ void cyclic_task(double Kp, double Kd) {
                         int tau_dyn_thousand_3 = tau_Nm2thousand(tau_pd_ankle_l, 0.74);
 
 #ifdef Right_Part
-                        r_Hip_pd.pid_set_params(0.2, 0, 0);
-                        r_Knee_pd.pid_set_params(0.2, 0, 0);
-                        r_Ankle_pd.pid_set_params(0.4, 0, 0);
+                        r_Hip_pd.pid_set_params(0.8, 0, 5);
+                        r_Knee_pd.pid_set_params(0.6, 0, 3);
+                        r_Ankle_pd.pid_set_params(0.5, 0, 4);
 
                         Eigen::Vector3d compensation_r;
                         compensation_r = right_SEA_dynamics.feedforward_dynamics(d4q_r, d3q_r, ddq_r, dq_r, q_r,
                                                                                  Ks_r);
-                        compensation_r = 0.85 * compensation_r;
+                        compensation_r = 0.95 * compensation_r;
 
                         double r_hip_Impedance =
-                                (B(0) * dq_e_r(0) + K(0) * q_e_r(0));
+                                (B_r(0) * dq_e_r(0) + K_r(0) * q_e_r(0));
                         double r_knee_Impedance =
-                                (B(1) * dq_e_r(1) + K(1) * q_e_r(1));
+                                (B_r(1) * dq_e_r(1) + K_r(1) * q_e_r(1));
                         double r_ankle_Impedance =
-                                (0 * dq_e_r(2) + K(2) * q_e_r(2));
+                                (B_r(2) * dq_e_r(2) + K_r(2) * q_e_r(2));
 
                         double r_hip_tau_spr = Ks_r(0, 0) * (lever_arm_4_rad - link_4_rad);
                         double r_knee_tau_spr = Ks_r(1, 1) * (lever_arm_5_rad - link_5_rad);
