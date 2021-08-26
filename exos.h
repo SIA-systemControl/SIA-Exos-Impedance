@@ -87,8 +87,8 @@
 
 /** ------ Left Part ----- **/
 
-#define left_hip_init_motor_pos -141303482
-#define left_hip_init_spring_pos 13334
+#define left_hip_init_motor_pos -141886350
+#define left_hip_init_spring_pos 10249
 
 #define left_knee_init_motor_pos -657357980
 #define left_knee_init_spring_pos -3272
@@ -109,9 +109,9 @@
 #define right_ankle_init_link_pos 179693
 
 #ifdef Tracking_Impendance
-#define left_hip_id_init_rad 0
+#define left_hip_id_init_rad -0.1
 #define left_knee_id_init_rad -0.1
-#define left_ankle_id_init_rad 0.0
+#define left_ankle_id_init_rad 0.1
 #endif
 
 #ifdef Drag_Impendance
@@ -120,7 +120,7 @@
 #define left_ankle_id_init_rad 0
 #endif
 
-#define right_hip_id_init_rad 0.025
+#define right_hip_id_init_rad 0.0
 #define right_knee_id_init_rad -0.113
 #define right_ankle_id_init_rad 0.035
 
@@ -206,24 +206,7 @@ double a_ankle[8] = {0.1004, 0.1017, -0.0959, -0.0096, 0.0153, 0.0046, -0.0107, 
 double b_ankle[8] = {0.0716, 0.0490, 0.0202, -0.0380, -0.0006, 0.0117, -0.0044, -0.0039};
 double a0_ankle = -0.0394;
 
-int P = 2500; // time of Gait Cycle [ms]
-/**
- * Fourier Series of Joint angle (for excitation)
- */
-//double a_hip[10] = {0.1513, -0.1528, 0.5003, 0.3725, 0.0399, -0.2009, -0.1917, 0.0557, -0.2464, 0.1242};
-//double b_hip[10] = {-0.0596, -0.1239, -0.2497, 0.0482, -0.2865, -0.1963, 0.0962, 0.0089, -0.2067, -0.0817};
-//double w_hip = 2 * Pi * 0.1;  // angle freq  = 2*pi*f where f is base freq = 0.1Hz
-//double a0_hip = 0.1622;
-//
-//double a_knee[10] = {0.0390, -0.3820, 0.1850, 0.2478, 0.4046, -0.6617, -0.1132, 0.0597, 0.1812, -0.0055};
-//double b_knee[10] = {0.0868, 0.0180, 0.0057, -0.4910, -0.3413, -0.4021, 0.0644, -0.3866, 0.0048, 0.0586};
-//double w_knee = 2 * Pi * 0.1;
-//double a0_knee = -0.8228;
-//
-//double a_ankle[10] = {0.2134, -0.2709, -0.1218, 0.2742, -0.1078, 0.2139, -0.7059, 0.5633, -0.0874, -0.0715};
-//double b_ankle[10] = {-0.0533, 0.3066, -0.0668, -0.2199, -1.0236, -0.9524, -0.3766, 0.1015, -0.1240, -0.0195};
-//double w_ankle = 2 * Pi * 0.1;
-//double a0_ankle = 0.9358;
+int P = 4000; // time of Gait Cycle [ms]
 
 // Offsets for PDO entries
 static struct {

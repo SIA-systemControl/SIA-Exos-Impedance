@@ -1,6 +1,10 @@
 //
 // Created by yc on 2021/6/25.
-// Last modified on 2021/8/19
+// Last modified on 2021/8/26
+// TODO:
+//  (1) summary the polarity of each encoder ( for next-gen Exos )
+//  (2) generate right leg gait (done)
+//  (3) check right Velocity Filter.
 //
 
 #include "exos.h"
@@ -11,6 +15,7 @@
 
 bool EtherCAT_ONLINE = true;
 bool POST_RESET = false;
+bool RIGHT_GC_START = false;
 
 std::ofstream left_outFile;
 std::ofstream left_velFile;
@@ -454,9 +459,9 @@ void cyclic_task(double Kp, double Kd) {
                         std::cout << "vel of link-5: " << link_5_vel << std::endl;
                         std::cout << "vel of link-6: " << link_6_vel << std::endl;
 
-                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[l_ankle])
+                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[l_hip])
                                   << std::endl;
-                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[l_ankle])
+                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[l_hip])
                                   << std::endl;
 
 
@@ -557,7 +562,8 @@ void cyclic_task(double Kp, double Kd) {
                     /** B. Assign operation to motor(s) */
 
                     /** count for generated curve */
-                    static int curve_count = 0;   // unit(ms)
+                    static int curve_count_main = 0;   // unit(ms)
+                    static int curve_count_sub = 0;   // unit(ms)
                     static int settle_cnt = 0;
                     static float max_err = 0;
                     static double l_hip_rad_old = 0;
@@ -576,53 +582,99 @@ void cyclic_task(double Kp, double Kd) {
 #endif
                     static double tau_dyn_1_old = 0;
                     static double tau_dyn_2_old = 0;
-                    curve_count++;
+                    curve_count_main++;
 
 #ifdef SineWave
-                    //                    if(!(curve_count % 1000))
+                    //                    if(!(curve_count_main % 1000))
                     //                        freq += 0.5;
 
-                    double hip_ref_rad = cosineWave(curve_count, freq, 0.1);
-                    double knee_ref_rad = cosineWave(curve_count, freq, 0);
-                    double ankle_ref_rad = cosineWave(curve_count, freq, 0.2);
+                    double hip_ref_rad = cosineWave(curve_count_main, freq, 0.1);
+                    double knee_ref_rad = cosineWave(curve_count_main, freq, 0);
+                    double ankle_ref_rad = cosineWave(curve_count_main, freq, 0.2);
 
-                    double hip_ref_vel = 2 * Pi * freq * sineWave(curve_count, freq, -0.1);
-                    double knee_ref_vel = 2 * Pi * freq * sineWave(curve_count, freq, 0);
-                    double ankle_ref_vel = 2 * Pi * freq * sineWave(curve_count, freq, -0.2);
+                    double hip_ref_vel = 2 * Pi * freq * sineWave(curve_count_main, freq, -0.1);
+                    double knee_ref_vel = 2 * Pi * freq * sineWave(curve_count_main, freq, 0);
+                    double ankle_ref_vel = 2 * Pi * freq * sineWave(curve_count_main, freq, -0.2);
 
-                    double hip_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count, freq, -0.1);
-                    double knee_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count, freq, -0);
-                    double ankle_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count, freq, 0.2);
+                    double hip_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, -0.1);
+                    double knee_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, -0);
+                    double ankle_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, 0.2);
 #else
                     double beta = 0.8;
-                    double Gc;
-                    Gc = 1.0 * (curve_count % P) / P;
+                    double Gc_main, Gc_sub;
+                    Gc_main = 1.0 * (curve_count_main % P) / P;
 
                     if (!POST_RESET) {
                         //TODO: right part fourier
-                        double hip_ref_rad = base_Fourier_8th(Gc, a_hip, b_hip, w, a0_hip);
-                        double knee_ref_rad = beta * base_Fourier_8th(Gc, a_knee, b_knee, w, a0_knee);
-                        double ankle_ref_rad = beta * base_Fourier_8th(Gc, a_ankle, b_ankle, w, a0_ankle);
+                        double hip_ref_rad_l = 0.8 * base_Fourier_8th(Gc_main, a_hip, b_hip, w, a0_hip);
+                        double knee_ref_rad_l = beta * base_Fourier_8th(Gc_main, a_knee, b_knee, w, a0_knee);
+                        double ankle_ref_rad_l = 1.5 * base_Fourier_8th(Gc_main, a_ankle, b_ankle, w, a0_ankle);
 
-                        double hip_ref_vel = differentia_1st_Fourier_8th(Gc, a_knee, b_knee, w, a0_knee, P);
-                        double knee_ref_vel = beta * differentia_1st_Fourier_8th(Gc, a_knee, b_knee, w, a0_knee, P);
-                        double ankle_ref_vel =
-                                beta * differentia_1st_Fourier_8th(Gc, a_ankle, b_ankle, w, a0_ankle, P);
+                        double hip_ref_vel_l =
+                                0.8 * differentia_1st_Fourier_8th(Gc_main, a_hip, b_hip, w, a0_knee, P);
+                        double knee_ref_vel_l =
+                                beta * differentia_1st_Fourier_8th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                        double ankle_ref_vel_l =
+                                1.5 * differentia_1st_Fourier_8th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
 
-                        double hip_ref_acc = differentia_2ed_Fourier_8th(Gc, a_hip, b_hip, w, a0_hip, P);
-                        double knee_ref_acc = beta * differentia_2ed_Fourier_8th(Gc, a_knee, b_knee, w, a0_knee, P);
-                        double ankle_ref_acc =
-                                beta * differentia_2ed_Fourier_8th(Gc, a_ankle, b_ankle, w, a0_ankle, P);
+                        double hip_ref_acc_l = 0.8 * differentia_2ed_Fourier_8th(Gc_main, a_hip, b_hip, w, a0_hip, P);
+                        double knee_ref_acc_l =
+                                beta * differentia_2ed_Fourier_8th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                        double ankle_ref_acc_l =
+                                1.5 * differentia_2ed_Fourier_8th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
 
-                        double hip_ref_3rd = differentia_3rd_Fourier_8th(Gc, a_hip, b_hip, w, a0_hip, P);
-                        double knee_ref_3rd = beta * differentia_3rd_Fourier_8th(Gc, a_knee, b_knee, w, a0_knee, P);
-                        double ankle_ref_3rd =
-                                beta * differentia_3rd_Fourier_8th(Gc, a_ankle, b_ankle, w, a0_ankle, P);
+                        double hip_ref_3rd_l = 0.8 * differentia_3rd_Fourier_8th(Gc_main, a_hip, b_hip, w, a0_hip, P);
+                        double knee_ref_3rd_l =
+                                beta * differentia_3rd_Fourier_8th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                        double ankle_ref_3rd_l =
+                                1.5 * differentia_3rd_Fourier_8th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
 
-                        double hip_ref_4th = differentia_4th_Fourier_8th(Gc, a_hip, b_hip, w, a0_hip, P);
-                        double knee_ref_4th = beta * differentia_4th_Fourier_8th(Gc, a_knee, b_knee, w, a0_knee, P);
-                        double ankle_ref_4th =
-                                beta * differentia_4th_Fourier_8th(Gc, a_ankle, b_ankle, w, a0_ankle, P);
+                        double hip_ref_4th_l = 0.8 * differentia_4th_Fourier_8th(Gc_main, a_hip, b_hip, w, a0_hip, P);
+                        double knee_ref_4th_l =
+                                beta * differentia_4th_Fourier_8th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                        double ankle_ref_4th_l =
+                                1.5 * differentia_4th_Fourier_8th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
+
+                        if(RIGHT_GC_START){
+                            curve_count_sub++;
+                            Gc_sub = 1.0 * (curve_count_sub % P) / P;
+                        }else if(Gc_main > 0.65)
+                            RIGHT_GC_START = true;
+                        else{
+                            Gc_sub = 0;
+                        }
+
+                        double hip_ref_rad_r = 0.8 * base_Fourier_8th(Gc_sub, a_hip, b_hip, w, a0_hip);
+                        double knee_ref_rad_r = beta * base_Fourier_8th(Gc_sub, a_knee, b_knee, w, a0_knee);
+                        double Ankle_ref_rad_r = 1.5 * base_Fourier_8th(Gc_sub, a_ankle, b_ankle, w, a0_ankle);
+
+                        double hip_ref_vel_r =
+                                0.8 * differentia_1st_Fourier_8th(Gc_sub, a_hip, b_hip, w, a0_knee, P);
+                        double knee_ref_vel_r =
+                                beta * differentia_1st_Fourier_8th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                        double Ankle_ref_vel_r =
+                                1.5 * differentia_1st_Fourier_8th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+
+                        double hip_ref_acc_r = 0.8 * differentia_2ed_Fourier_8th(Gc_sub, a_hip, b_hip, w, a0_hip, P);
+                        double knee_ref_acc_r =
+                                beta * differentia_2ed_Fourier_8th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                        double Ankle_ref_acc_r =
+                                1.5 * differentia_2ed_Fourier_8th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+
+                        double hip_ref_3rd_r = 0.8 * differentia_3rd_Fourier_8th(Gc_sub, a_hip, b_hip, w, a0_hip, P);
+                        double knee_ref_3rd_r =
+                                beta * differentia_3rd_Fourier_8th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                        double Ankle_ref_3rd_r =
+                                1.5 * differentia_3rd_Fourier_8th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+
+                        double hip_ref_4th_r = 0.8 * differentia_4th_Fourier_8th(Gc_sub, a_hip, b_hip, w, a0_hip, P);
+                        double knee_ref_4th_r =
+                                beta * differentia_4th_Fourier_8th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                        double Ankle_ref_4th_r =
+                                1.5 * differentia_4th_Fourier_8th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+
+
+
 #endif
                         /**
                          ** Controller Part
@@ -633,45 +685,51 @@ void cyclic_task(double Kp, double Kd) {
                         int filter_window = 30;
                         int avg_window = 10;
 
-                        if (curve_count < filter_window) {
-                            if (curve_count < avg_window) {
-                                input_1[curve_count] = link_1_vel;
-                                input_2[curve_count] = link_2_vel;
-                                input_3[curve_count] = link_3_vel;
+                        if (curve_count_main < filter_window) {
+                            if (curve_count_main < avg_window) {
+                                input_1[curve_count_main] = link_1_vel;
+                                input_2[curve_count_main] = link_2_vel;
+                                input_3[curve_count_main] = link_3_vel;
 #ifdef Right_Part
-                                input_4[curve_count] = link_4_vel;
-                                input_5[curve_count] = link_5_vel;
-                                input_6[curve_count] = link_6_vel;
+                                input_4[curve_count_main] = link_4_vel;
+                                input_5[curve_count_main] = link_5_vel;
+                                input_6[curve_count_main] = link_6_vel;
 #endif
                             } else {
                                 double tmp1 =
-                                        sum_of_array(input_1, curve_count - avg_window, curve_count) / avg_window;
+                                        sum_of_array(input_1, curve_count_main - avg_window, curve_count_main) /
+                                        avg_window;
                                 double tmp2 =
-                                        sum_of_array(input_2, curve_count - avg_window, curve_count) / avg_window;
+                                        sum_of_array(input_2, curve_count_main - avg_window, curve_count_main) /
+                                        avg_window;
                                 double tmp3 =
-                                        sum_of_array(input_3, curve_count - avg_window, curve_count) / avg_window;
-                                input_1[curve_count] = tmp1;
-                                input_2[curve_count] = tmp2;
-                                input_3[curve_count] = tmp3;
+                                        sum_of_array(input_3, curve_count_main - avg_window, curve_count_main) /
+                                        avg_window;
+                                input_1[curve_count_main] = tmp1;
+                                input_2[curve_count_main] = tmp2;
+                                input_3[curve_count_main] = tmp3;
 #ifdef Right_Part
                                 double tmp4 =
-                                        sum_of_array(input_4, curve_count - avg_window, curve_count) / avg_window;
+                                        sum_of_array(input_4, curve_count_main - avg_window, curve_count_main) /
+                                        avg_window;
                                 double tmp5 =
-                                        sum_of_array(input_5, curve_count - avg_window, curve_count) / avg_window;
+                                        sum_of_array(input_5, curve_count_main - avg_window, curve_count_main) /
+                                        avg_window;
                                 double tmp6 =
-                                        sum_of_array(input_6, curve_count - avg_window, curve_count) / avg_window;
-                                input_4[curve_count] = tmp4;
-                                input_5[curve_count] = tmp5;
-                                input_6[curve_count] = tmp6;
+                                        sum_of_array(input_6, curve_count_main - avg_window, curve_count_main) /
+                                        avg_window;
+                                input_4[curve_count_main] = tmp4;
+                                input_5[curve_count_main] = tmp5;
+                                input_6[curve_count_main] = tmp6;
 #endif
                             }
-                            hip_l_vel = input_1[curve_count];
-                            knee_l_vel = input_2[curve_count];
-                            ankle_l_vel = input_3[curve_count];
+                            hip_l_vel = input_1[curve_count_main];
+                            knee_l_vel = input_2[curve_count_main];
+                            ankle_l_vel = input_3[curve_count_main];
 #ifdef Right_Part
-                            hip_r_vel = input_4[curve_count];
-                            knee_r_vel = input_5[curve_count];
-                            ankle_r_vel = input_6[curve_count];
+                            hip_r_vel = input_4[curve_count_main];
+                            knee_r_vel = input_5[curve_count_main];
+                            ankle_r_vel = input_6[curve_count_main];
 #endif
                         } else {
                             left_shift_array(input_1, link_1_vel, filter_window);
@@ -726,30 +784,30 @@ void cyclic_task(double Kp, double Kd) {
 
                         Eigen::Vector3d M, B_l, K_l, B_r, K_r;
 #ifdef Tracking_Impendance
-                        K_l << 30, 30, 20;
-                        B_l << 0.4, 1.0, 0.4;
-                        K_r << 50, 50, 20;
-                        B_r << 0.4,0.8,0.5;
+                        K_l << 65, 40, 20;
+                        B_l << 1.8, 1.2, 0.4;
+                        K_r << 60, 40, 20;
+                        B_r << 2, 1.4, 0.5;
 
-                        d4q_l << hip_ref_4th, knee_ref_4th, ankle_ref_4th;
-                        d3q_l << hip_ref_3rd, knee_ref_3rd, ankle_ref_3rd;
-                        ddq_l << hip_ref_acc, (knee_ref_acc), (ankle_ref_acc);
-                        dq_l << hip_ref_vel, (knee_ref_vel), (ankle_ref_vel);
-                        q_l << hip_ref_rad, (knee_ref_rad), (ankle_ref_rad);
-                        dq_e_l << hip_ref_vel - hip_l_vel, (knee_ref_vel - knee_l_vel), (ankle_ref_vel -
-                                                                                         ankle_l_vel);
-                        q_e_l << hip_ref_rad - link_1_rad, (knee_ref_rad - link_2_rad), (ankle_ref_rad -
-                                                                                         link_3_rad);
+                        d4q_l << hip_ref_4th_l, knee_ref_4th_l, ankle_ref_4th_l;
+                        d3q_l << hip_ref_3rd_l, knee_ref_3rd_l, ankle_ref_3rd_l;
+                        ddq_l << hip_ref_acc_l, (knee_ref_acc_l), (ankle_ref_acc_l);
+                        dq_l << hip_ref_vel_l, (knee_ref_vel_l), (ankle_ref_vel_l);
+                        q_l << hip_ref_rad_l, (knee_ref_rad_l), (ankle_ref_rad_l);
+                        dq_e_l << hip_ref_vel_l - hip_l_vel, (knee_ref_vel_l - knee_l_vel), (ankle_ref_vel_l -
+                                                                                             ankle_l_vel);
+                        q_e_l << hip_ref_rad_l - link_1_rad, (knee_ref_rad_l - link_2_rad), (ankle_ref_rad_l -
+                                                                                             link_3_rad);
 #ifdef Right_Part
-                        d4q_r << hip_ref_4th, knee_ref_4th, ankle_ref_4th;
-                        d3q_r << hip_ref_3rd, knee_ref_3rd, ankle_ref_3rd;
-                        ddq_r << hip_ref_acc, (knee_ref_acc), (ankle_ref_acc);
-                        dq_r << hip_ref_vel, (knee_ref_vel), (ankle_ref_vel);
-                        q_r << hip_ref_rad, (knee_ref_rad), (ankle_ref_rad);
-                        dq_e_r << hip_ref_vel - hip_r_vel, (knee_ref_vel - knee_r_vel), (ankle_ref_vel -
-                                                                                         ankle_r_vel);
-                        q_e_r << hip_ref_rad - link_4_rad, (knee_ref_rad - link_5_rad), (ankle_ref_rad -
-                                                                                         link_6_rad);
+                        d4q_r << hip_ref_4th_r, knee_ref_4th_r, Ankle_ref_4th_r;
+                        d3q_r << hip_ref_3rd_r, knee_ref_3rd_r, Ankle_ref_3rd_r;
+                        ddq_r << hip_ref_acc_r, (knee_ref_acc_r), (Ankle_ref_acc_r);
+                        dq_r << hip_ref_vel_r, (knee_ref_vel_r), (Ankle_ref_vel_r);
+                        q_r << hip_ref_rad_r, (knee_ref_rad_r), (Ankle_ref_rad_r);
+                        dq_e_r << hip_ref_vel_r - hip_r_vel, (knee_ref_vel_r - knee_r_vel), (Ankle_ref_vel_r -
+                                                                                             ankle_r_vel);
+                        q_e_r << hip_ref_rad_r - link_4_rad, (knee_ref_rad_r - link_5_rad), (Ankle_ref_rad_r -
+                                                                                             link_6_rad);
 #endif
 
 #endif
@@ -763,7 +821,7 @@ void cyclic_task(double Kp, double Kd) {
                         dq_l << 0, (0), (0);
                         q_l << link_1_rad, (link_2_rad), (link_3_rad);
                         dq_e_l << 0 - hip_l_vel, (0 - knee_l_vel), (0 - ankle_l_vel);
-                        q_e_l << hip_ref_rad - link_1_rad, (knee_ref_rad - link_2_rad), (ankle_ref_rad - link_3_rad);
+                        q_e_l << hip_ref_rad_l - link_1_rad, (knee_ref_rad_l - link_2_rad), (ankle_ref_rad_l - link_3_rad);
 #endif
 
                         Select_Matrix_d << 1, 0, 0,
@@ -781,20 +839,22 @@ void cyclic_task(double Kp, double Kd) {
 
                         // calculate feedforward torque. (after transmission)
                         Eigen::Vector3d compensation_l;
-                        compensation_l = left_SEA_dynamics.feedforward_dynamics(d4q_l, d3q_l, ddq_l, dq_l, q_l,
-                                                                                Ks_l);
+//                        compensation_l = left_SEA_dynamics.feedforward_dynamics(d4q_l, d3q_l, ddq_l, dq_l, q_l,
+//                                                                                Ks_l);
+                        compensation_l = left_SEA_dynamics.Gravity_term(q_l);
+
                         compensation_l = 0.85 * compensation_l;
 
-                        l_Hip_pd.pid_set_params(0.6, 0, 4); // 0.6,4 (0.85 boundary)
+                        l_Hip_pd.pid_set_params(0.5, 0, 4); // 0.6,4 (0.85 boundary)
                         l_Knee_pd.pid_set_params(0.45, 0, 2.5); // 0.45,2.5
                         l_Ankle_pd.pid_set_params(0.5, 0, 3); // 0.45,3
 
                         double l_hip_Impedance =
-                                compensation_l(0) / transmission_hip + (B_l(0) * dq_e_l(0) + K_l(0) * q_e_l(0));
+                                compensation_l(0) + (B_l(0) * dq_e_l(0) + K_l(0) * q_e_l(0));
                         double l_knee_Impedance =
-                                compensation_l(1) / transmission_knee + (B_l(1) * dq_e_l(1) + K_l(1) * q_e_l(1));
+                                compensation_l(1) + (B_l(1) * dq_e_l(1) + K_l(1) * q_e_l(1));
                         double l_ankle_Impedance =
-                                compensation_l(2) / transmission_ankle + (B_l(2) * dq_e_l(2) + K_l(2) * q_e_l(2));
+                                compensation_l(2) + (B_l(2) * dq_e_l(2) + K_l(2) * q_e_l(2));
 
                         double l_hip_tau_spr = Ks_l(0, 0) * (lever_arm_1_rad - link_1_rad);
                         double l_knee_tau_spr = Ks_l(1, 1) * (lever_arm_2_rad - link_2_rad);
@@ -814,22 +874,22 @@ void cyclic_task(double Kp, double Kd) {
                         int tau_dyn_thousand_3 = tau_Nm2thousand(tau_pd_ankle_l, 0.74);
 
 #ifdef Right_Part
-                        r_Hip_pd.pid_set_params(0.8, 0, 5);
-                        r_Knee_pd.pid_set_params(0.6, 0, 3);
-                        r_Ankle_pd.pid_set_params(0.5, 0, 4);
+                        r_Hip_pd.pid_set_params(0.6, 0, 6);
+                        r_Knee_pd.pid_set_params(0.5, 0, 4.5);
+                        r_Ankle_pd.pid_set_params(0.5, 0, 3);
 
                         Eigen::Vector3d compensation_r;
                         compensation_r = right_SEA_dynamics.feedforward_dynamics(d4q_r, d3q_r, ddq_r, dq_r, q_r,
                                                                                  Ks_r);
 
-                        compensation_r = 1.0 * compensation_r;
+                        compensation_r = 0.85 * compensation_r;
 
                         double r_hip_Impedance =
-                                compensation_r(0)/transmission_hip + (B_r(0) * dq_e_r(0) + K_r(0) * q_e_r(0));
+                                compensation_r(0) + (B_r(0) * dq_e_r(0) + K_r(0) * q_e_r(0));
                         double r_knee_Impedance =
-                                compensation_r(1)/transmission_knee + (B_r(1) * dq_e_r(1) + K_r(1) * q_e_r(1));
+                                compensation_r(1) + (B_r(1) * dq_e_r(1) + K_r(1) * q_e_r(1));
                         double r_ankle_Impedance =
-                                compensation_r(2)/transmission_ankle + (B_r(2) * dq_e_r(2) + K_r(2) * q_e_r(2));
+                                compensation_r(2) + (B_r(2) * dq_e_r(2) + K_r(2) * q_e_r(2));
 
                         double r_hip_tau_spr = Ks_r(0, 0) * (lever_arm_4_rad - link_4_rad);
                         double r_knee_tau_spr = Ks_r(1, 1) * (lever_arm_5_rad - link_5_rad);
@@ -867,20 +927,20 @@ void cyclic_task(double Kp, double Kd) {
                         EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
                         EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
 #ifdef Right_Part
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_hip], CST);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CST);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_ankle], CST);
-
-                        EC_WRITE_S16(domainRx_pd + offset.target_torque[r_hip], tau_dyn_thousand_4);
-                        EC_WRITE_S16(domainRx_pd + offset.target_torque[r_knee], tau_dyn_thousand_5);
-                        EC_WRITE_S16(domainRx_pd + offset.target_torque[r_ankle], tau_dyn_thousand_6);
+//                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_hip], CST);
+//                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CST);
+//                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_ankle], CST);
+////
+//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[r_hip], tau_dyn_thousand_4);
+//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[r_knee], tau_dyn_thousand_5);
+//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[r_ankle], tau_dyn_thousand_6);
 #endif
                         /** ----------------------------------------------------------------------------------- */
                         if (!(cycle_count % 10)) { // show message per 1 ms.
                             std::cout << "===============================" << std::endl;
                             std::cout << "task_working_Control" << std::endl;
                             std::cout << "===============================" << std::endl;
-                            std::cout << "time: " << 1.0 * curve_count / TASK_FREQUENCY << " [s] " << std::endl;
+                            std::cout << "time: " << 1.0 * curve_count_main / TASK_FREQUENCY << " [s] " << std::endl;
                             std::cout << "dq_e_l: " << std::endl;
                             std::cout << dq_e_l.format(PrettyPrint) << std::endl;
                             std::cout << "q_e_l: " << std::endl;
@@ -901,20 +961,43 @@ void cyclic_task(double Kp, double Kd) {
                                 default:
                                     break;
                             }
-                            std::cout << "Analog in(0-4095): " << An_in << std::endl;
-                            std::cout << "Result: " << logic_1 << std::endl;
+//                            std::cout << "Analog in(0-4095): " << An_in << std::endl;
+//                            std::cout << "Result: " << logic_1 << std::endl;
+
+                            std::cout << " ---- Servo Error Status ---- " << std::endl;
+                            std::cout << "Left Hip = " << EC_READ_U16(domainTx_pd + offset.Error_code[l_hip]) << std::endl;
+                            std::cout << "Left Knee = " << EC_READ_U16(domainTx_pd + offset.Error_code[l_knee]) << std::endl;
+                            std::cout << "Left Ankle = " << EC_READ_U16(domainTx_pd + offset.Error_code[l_ankle]) << std::endl;
+                            std::cout << "Right Hip = " << EC_READ_U16(domainTx_pd + offset.Error_code[r_hip]) << std::endl;
+                            std::cout << "Right Knee = " << EC_READ_U16(domainTx_pd + offset.Error_code[r_knee]) << std::endl;
+                            std::cout << "Right Ankle = " << EC_READ_U16(domainTx_pd + offset.Error_code[r_ankle]) << std::endl;
+
+                            std::cout << " ---- Gait Cycle ----" << std::endl;
+                            if (Gc_main < 0.15)
+                                std::cout << "      Mid stance Phase." << std::endl;
+                            else if (Gc_main < 0.35)
+                                std::cout << "      Heel off Phase." << std::endl;
+                            else if (Gc_main < 0.5)
+                                std::cout << "      Toe off Phase." << std::endl;
+                            else if (Gc_main < 0.75)
+                                std::cout << "      Mid Swing Phase." << std::endl;
+                            else if (Gc_main < 0.85)
+                                std::cout << "      Heel Strike Phase." << std::endl;
+                            else if (Gc_main < 1.0)
+                                std::cout << "      Foot flat Phase." << std::endl;
+
+                            std::cout << " --------------------- " << std::endl;
                         }
 
 
-                        left_outFile << hip_ref_rad << ',' << knee_ref_rad << ',' << ankle_ref_rad << ','
+                        left_outFile << hip_ref_rad_l << ',' << knee_ref_rad_l << ',' << ankle_ref_rad_l << ','
                                      << link_1_rad << ',' << link_2_rad << ',' << link_3_rad << ','
                                      << lever_arm_1_rad << ',' << lever_arm_2_rad << ',' << lever_arm_3_rad << ','
                                      << tau_mot_1 << ',' << tau_mot_2 << ',' << tau_mot_3 << ','
-                                     << tau_pd_hip_l << ',' << tau_pd_knee_l << ',' << tau_pd_ankle_l << ','
-                                     << q_e_r(2)
+                                     << tau_pd_hip_l << ',' << tau_pd_knee_l << ',' << tau_pd_ankle_l
                                      << std::endl;
 
-                        left_velFile << hip_ref_vel << ',' << knee_ref_vel << ',' << ankle_ref_vel << ','
+                        left_velFile << hip_ref_vel_l << ',' << knee_ref_vel_l << ',' << ankle_ref_vel_l << ','
                                      << hip_l_vel << ',' << knee_l_vel << ',' << ankle_l_vel << ','
                                      << lever_arm_1_vel << ',' << lever_arm_2_vel << ',' << lever_arm_3_vel << ','
                                      << tau_mot_1 << ',' << tau_mot_2 << ',' << tau_mot_3 << ','
@@ -927,15 +1010,14 @@ void cyclic_task(double Kp, double Kd) {
                                        << lever_arm_3_rad - link_3_rad
                                        << std::endl;
 #ifdef  Right_Part
-                        right_outFile << hip_ref_rad << ',' << knee_ref_rad << ',' << ankle_ref_rad << ','
+                        right_outFile << hip_ref_rad_r << ',' << knee_ref_rad_r << ',' << Ankle_ref_rad_r << ','
                                       << link_4_rad << ',' << link_5_rad << ',' << link_6_rad << ','
                                       << lever_arm_4_rad << ',' << lever_arm_5_rad << ',' << lever_arm_6_rad << ','
                                       << tau_mot_1 << ',' << tau_mot_2 << ',' << tau_mot_3 << ','
-                                      << tau_pd_hip_r << ',' << tau_pd_knee_r << ',' << tau_pd_ankle_r << ','
-                                      << q_e_l(2)
+                                      << tau_pd_hip_r << ',' << tau_pd_knee_r << ',' << tau_pd_ankle_r
                                       << std::endl;
 
-                        right_velFile << hip_ref_vel << ',' << knee_ref_vel << ',' << ankle_ref_vel << ','
+                        right_velFile << hip_ref_vel_l << ',' << knee_ref_vel_l << ',' << ankle_ref_vel_l << ','
                                       << hip_r_vel << ',' << knee_r_vel << ',' << ankle_r_vel << ','
                                       << lever_arm_4_vel << ',' << lever_arm_5_rad << ',' << lever_arm_6_rad << ','
                                       << tau_mot_1 << ',' << tau_mot_2 << ',' << tau_mot_3 << ','
@@ -954,7 +1036,7 @@ void cyclic_task(double Kp, double Kd) {
                         gTaskFsm.m_gtaskFSM = task_working_RESET;
 
                     id_ready_cnt++;
-                    if (curve_count >= P * 10) {
+                    if (curve_count_main >= P * 10) {
                         EtherCAT_ONLINE = false;
                         std::cout << "[End of Program...]" << std::endl;
                         break;

@@ -639,7 +639,9 @@ dynamics::feedforward_dynamics(Eigen::Vector3d d4q, Eigen::Vector3d d3q, Eigen::
     ddtheta_d = K.inverse() * (H * d4q + 2 * dH * d3q + ddC + ddG + (ddH + K) * ddq);
 
     Eigen::Vector3d tau_ff;
-    tau_ff = coupling_dynamics(ddq, dq, q, ddtheta_d, dtheta_d);
+//    tau_ff = coupling_dynamics(ddq, dq, q, ddtheta_d, dtheta_d);
+
+    tau_ff = Gravity + Friction_link(dq);
 
     return tau_ff;
 }
