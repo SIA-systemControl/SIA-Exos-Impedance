@@ -8,39 +8,39 @@
 
 double base_Fourier_8th(double GaitCycle, const double *a, const double *b, double w, double q0) {
     double sum = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 5; i++)
         sum += a[i] * cos((i + 1) * GaitCycle * w) + b[i] * sin((i + 1) * GaitCycle * w);
     sum += q0;
     return sum;
 }
 
-double differentia_1st_Fourier_8th(double GaitCycle, const double *a, const double *b, double w, double q0, double P) {
+double differentia_1st_Fourier_5th(double GaitCycle, const double *a, const double *b, double w, double q0, double P) {
     double sum = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 5; i++)
         sum += -((i + 1) * w / (P / 1000)) * a[i] * sin((i + 1) * GaitCycle * w) +
                ((i + 1) * w / (P / 1000)) * b[i] * cos((i + 1) * GaitCycle * w);
     return sum;
 }
 
-double differentia_2ed_Fourier_8th(double GaitCycle, const double *a, const double *b, double w, double q0,double P) {
+double differentia_2ed_Fourier_5th(double GaitCycle, const double *a, const double *b, double w, double q0, double P) {
     double sum = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 5; i++)
         sum += -((i + 1) * w/ (P / 1000)) * ((i + 1) * w/ (P / 1000)) * a[i] * cos((i + 1) * GaitCycle * w) +
                -((i + 1) * w/ (P / 1000)) * ((i + 1) * w/ (P / 1000)) * b[i] * sin((i + 1) * GaitCycle * w);
     return sum;
 }
 
-double differentia_3rd_Fourier_8th(double GaitCycle, const double *a, const double *b, double w, double q0,double P){
+double differentia_3rd_Fourier_5th(double GaitCycle, const double *a, const double *b, double w, double q0, double P){
     double sum = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 5; i++)
         sum += pow((i + 1) * w/ (P / 1000),3) * a[i] * sin((i + 1) * GaitCycle * w) +
                -pow((i + 1) * w/ (P / 1000),3) * b[i] * cos((i + 1) * GaitCycle * w);
     return sum;
 }
 
-double differentia_4th_Fourier_8th(double GaitCycle, const double *a, const double *b, double w, double q0,double P){
+double differentia_4th_Fourier_5th(double GaitCycle, const double *a, const double *b, double w, double q0, double P){
     double sum = 0;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < 5; i++)
         sum += pow((i + 1) * w/ (P / 1000),4) * a[i] * cos((i + 1) * GaitCycle * w) +
                +pow((i + 1) * w/ (P / 1000),4) * b[i] * sin((i + 1) * GaitCycle * w);
     return sum;

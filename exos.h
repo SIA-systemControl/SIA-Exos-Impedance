@@ -47,6 +47,8 @@
 #include <fstream>
 #include <sstream>
 
+#include <vector>
+
 #define left  true
 #define right false
 
@@ -105,11 +107,11 @@
 #define right_knee_init_motor_pos 263923337
 #define right_knee_init_spring_pos 48783
 
-#define right_ankle_init_motor_pos 123025140
-#define right_ankle_init_link_pos 179693
+#define right_ankle_init_motor_pos 123485603
+#define right_ankle_init_link_pos 179632
 
 #ifdef Tracking_Impendance
-#define left_hip_id_init_rad -0.1
+#define left_hip_id_init_rad -0
 #define left_knee_id_init_rad -0.1
 #define left_ankle_id_init_rad 0.1
 #endif
@@ -120,9 +122,9 @@
 #define left_ankle_id_init_rad 0
 #endif
 
-#define right_hip_id_init_rad 0.0
-#define right_knee_id_init_rad -0.113
-#define right_ankle_id_init_rad 0.035
+#define right_hip_id_init_rad -0.0
+#define right_knee_id_init_rad -0.15
+#define right_ankle_id_init_rad 0.1
 
 /**
  * Im3_r = 0.00006724
@@ -192,19 +194,25 @@ int reset_step = 0;
 /**
  * Fourier Series of Joint angle (for trajectory)
  */
-double w = 6.2819;  // angle freq  = 2*pi*f where f is base freq
+double w = 6.3135;  // angle freq  = 2*pi*f where f is base freq
 
-double a_hip[8] = {-0.2119, 0.0305, -0.0012, 0.0092, -0.0109, 0.0103, -0.0008, -0.0034};
-double b_hip[10] = {-0.2210, -0.0268, 0.0377, -0.0106, -0.0016, -0.0007, -0.0004, 0.0053};
-double a0_hip = 0.1789;
+double a_hip[5] = {-0.225645227910260, 0.0360304790104519, 0.00254865446903504, -0.000674609864637457,
+                   0.000303965449540142};
+double b_hip[5] = {-0.229796258171504, -0.0118504129599460, 0.0232804665830179, -0.00145849101729699,
+                   -0.00341591222668574};
+double a0_hip = 0.186907486042774;
 
-double a_knee[8] = {0.2994, -0.0492, 0.0284, 0.0045, -0.0062, -0.0029, 0.0088, 0.0003};
-double b_knee[8] = {-0.2964, 0.2990, -0.0641, -0.0295, 0.0185, 0.0147, -0.0092, -0.0016};
-double a0_knee = -0.4738;
+double a_knee[5] = {0.256054901728358, 0.0416086525077705, -0.0160488487863971, -0.0142858881272099,
+                    0.0119322181151623};
+double b_knee[5] = {-0.316157152847513, 0.302818293764027, -0.0941982933401444, -0.0172980940337325,
+                    0.0226773638216534};
+double a0_knee = -0.459374621258486;
 
-double a_ankle[8] = {0.1004, 0.1017, -0.0959, -0.0096, 0.0153, 0.0046, -0.0107, 0.0018};
-double b_ankle[8] = {0.0716, 0.0490, 0.0202, -0.0380, -0.0006, 0.0117, -0.0044, -0.0039};
-double a0_ankle = -0.0394;
+double a_ankle[5] = {0.0776424475156062, 0.0590373913244002, -0.0778405785776857, -0.00780036112617600,
+                     0.0171712742398171};
+double b_ankle[5] = {-0.000858549486717277, 0.0804442940262613, 0.0303645920489151, -0.0423382796412941,
+                     -0.000478022710129122};
+double a0_ankle = 0.00382497783967212;
 
 int P = 4000; // time of Gait Cycle [ms]
 
@@ -242,7 +250,7 @@ static struct {
     unsigned int digital_in4[joint_num];
     /* Error Code */
     unsigned int Error_code[joint_num];
-
+    unsigned int Error_report[joint_num];
 } offset;
 
 
@@ -307,6 +315,7 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
         {SynapticonSlave1, Synapticon, 0x230B, 0, &offset.second_velocity[l_hip]},
         {SynapticonSlave1, Synapticon, 0x2401, 0, &offset.analog_in1[l_hip]},
         {SynapticonSlave1, Synapticon, 0x603F, 0, &offset.Error_code[l_hip]},
+        {SynapticonSlave1, Synapticon, 0x203F, 1, &offset.Error_report[l_hip]},
 
         // slave - 2
         {SynapticonSlave2, Synapticon, 0x6041, 0, &offset.status_word[l_knee]},
@@ -397,6 +406,7 @@ static ec_pdo_entry_info_t pdo_entries_Tx[] = {
         {0x230B, 0x00, 32},  // Second velocity
         {0x2401, 0x00, 16},  // Analog Input 1
         {0x603F, 0x00, 16}, // Error code
+        {0x203F, 0x01, 64},
         {}
 };
 
@@ -409,7 +419,7 @@ static ec_pdo_info_t RxPDOs[] = {
 static ec_pdo_info_t TxPDOs[] = {
         /* TxPdo 0x1A00 */
         {0x1A00, 5, pdo_entries_Tx + 0},
-        {0x1A01, 4, pdo_entries_Tx + 5}
+        {0x1A01, 5, pdo_entries_Tx + 5}
 };
 
 /*
