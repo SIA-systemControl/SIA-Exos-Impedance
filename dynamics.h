@@ -7,6 +7,12 @@
 
 #include <cmath>
 #include <Eigen/Dense>
+#include <eigen3/unsupported/Eigen/MatrixFunctions>
+
+struct DiscretedMatrix{
+    Eigen::Matrix3d Ad;
+    Eigen::Vector3d Bd;
+};
 
 class dynamics {
 private:
@@ -57,6 +63,8 @@ public:
     Eigen::Vector3d
     feedforward_dynamics(Eigen::Vector3d d4q, Eigen::Vector3d d3q, Eigen::Vector3d ddq, Eigen::Vector3d dq,
                          Eigen::Vector3d q, Eigen::Matrix3d K);
+
+    DiscretedMatrix Discretization(Eigen::Matrix3d A, Eigen::Vector3d B, double Ts);
 
     double get_para();
 };
@@ -723,6 +731,34 @@ dynamics::dynamics(bool part) {
 
 double dynamics::get_para() {
     return this->Im1;
+}
+
+DiscretedMatrix dynamics::Discretization(Eigen::Matrix3d A, Eigen::Vector3d B, double Ts) {
+    DiscretedMatrix discretedMatrix;
+    Eigen::MatrixXd A_exp;
+    A_exp = (A*Ts).exp();
+    int nx = (B).rows();
+    int n =4;
+    double h = Ts/n;
+    int Coef = 2;
+    Eigen::Matrix3d Ai = Eigen::Matrix3d::Identity(nx,nx) + A_exp;
+    Eigen::Vector3d Bd;
+
+    for (int i = 1; i < n; i++) {
+        if(Coef == 2)
+            Coef = 4;
+        else
+            Coef = 2;
+
+        Ai += Coef * (A*i*h).exp();
+    }
+
+    Bd = (h/3) * Ai * B;
+
+    discretedMatrix.Ad = A_exp;
+    discretedMatrix.Bd = Bd;
+
+    return discretedMatrix;
 }
 
 #endif //MATRIX_DYNAMICS_DYNAMICS_H

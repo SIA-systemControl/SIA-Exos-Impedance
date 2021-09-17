@@ -17,6 +17,9 @@
 bool EtherCAT_ONLINE = true;
 bool POST_RESET = false;
 bool RIGHT_GC_START = false;
+bool FLG_LEFT_GC_1st = false;
+bool FLG_RIGHT_GC_1st = false;
+bool FLG_LEFT_GC_end = false;
 
 std::ofstream left_outFile;
 std::ofstream left_velFile;
@@ -32,6 +35,8 @@ std::ofstream right_outFile;
 std::ofstream right_velFile;
 std::ofstream right_save_file;
 #endif
+
+std::ofstream gaitData;
 
 /**
  * vel_des = Kp * (q_d - q_c)
@@ -85,6 +90,10 @@ double freq = 1;
 ButterworthLP bw_link = ButterworthLP(1000, 5, 2);
 
 static int SIG_cnt = 0;
+
+static int Gc_cnt = 0;
+
+Eigen::Matrix2d GaitMatrix;
 
 static void SIG_handle(int sig) {
     if (sig == SIGINT) {
@@ -162,6 +171,11 @@ void *robotcontrol(void *arg) {
     right_filter_file << "original" << ',' << "cpp filter" << std::endl;
 #endif
 
+    gaitData.open("gaitData.csv",std::ios::out);
+
+    GaitMatrix << 1, 1, 1, 1;
+    gMFSM.m_gaitMatrixFsm = Stance;
+
     while (EtherCAT_ONLINE) {
         if (gSysRunning.m_gWorkStatus == sys_woring_INIT_Failed) {
             EtherCAT_ONLINE = false;
@@ -184,6 +198,9 @@ void *robotcontrol(void *arg) {
     right_velFile.close();
     right_save_file.close();
 #endif
+
+    gaitData.close();
+
     pthread_exit(nullptr);
 }
 
@@ -485,9 +502,9 @@ void cyclic_task(double Kp, double Kd) {
                         std::cout << "vel of link-5: " << link_5_vel << "[rad]" << std::endl;
                         std::cout << "vel of link-6: " << link_6_vel << "[rad]" << std::endl;
 
-                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[r_ankle])
+                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[r_knee])
                                   << std::endl;
-                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[r_ankle])
+                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[r_knee])
                                   << std::endl;
 
                         for (int i = 0; i < active_num; i++) {
@@ -515,6 +532,13 @@ void cyclic_task(double Kp, double Kd) {
                         }
                     }
 
+//                    while(EtherCAT_ONLINE){
+//                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[r_knee])
+//                                  << std::endl;
+//                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[r_knee])
+//                                  << std::endl;
+//                    }
+
                     if (reset_step == 0) {
                         EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_hip], CSV);
                         EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_knee], CSV);
@@ -539,8 +563,8 @@ void cyclic_task(double Kp, double Kd) {
                         double reset_l_ankle_vel = l_Ankle_reset_pid.pid_control(left_ankle_id_init_rad, link_3_rad,
                                                                                  2200);
 
-                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_hip], reset_l_hip_vel);
-                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_knee], reset_l_knee_vel);
+//                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_hip], reset_l_hip_vel);
+//                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_knee], reset_l_knee_vel);
                         EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_ankle], reset_l_ankle_vel);
 
 #ifdef Right_Part
@@ -592,9 +616,19 @@ void cyclic_task(double Kp, double Kd) {
 
                 case task_working_Control: {
 
+                    unsigned int An_Left_1 = EC_READ_U16(domainTx_pd + offset.analog_in1[l_hip]);
+                    unsigned int An_Left_2 = EC_READ_U16(domainTx_pd + offset.analog_in2[l_hip]);
+                    unsigned int An_Right_1 = EC_READ_U16(domainTx_pd + offset.analog_in1[r_hip]);
+                    unsigned int An_Right_2 = EC_READ_U16(domainTx_pd + offset.analog_in2[r_hip]);
+
+                    GaitMatrix = UpdateGaitMatrix(An_Left_1, An_Left_2, An_Right_1, An_Right_2);
+
+
+
                     /** B. Assign operation to motor(s) */
 
                     /** count for generated curve */
+                    static double Gc_main = 0.8;;
                     static int curve_count_main = 0;   // unit(ms)
                     static int curve_count_sub = 0;   // unit(ms)
                     static int settle_cnt = 0;
@@ -615,7 +649,7 @@ void cyclic_task(double Kp, double Kd) {
 #endif
                     static double tau_dyn_1_old = 0;
                     static double tau_dyn_2_old = 0;
-                    curve_count_main++;
+
 
 #ifdef SineWave
                     //                    if(!(curve_count_main % 1000))
@@ -633,77 +667,156 @@ void cyclic_task(double Kp, double Kd) {
                     double knee_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, -0);
                     double ankle_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, 0.2);
 #else
+
+                    int GaitPhase = GaitMatrixParse(GaitMatrix);
+
                     double beta = 0.8;
-                    double Gc_main, Gc_sub;
-                    Gc_main = 1.0 * (curve_count_main % P) / P;
+                    double Gc_sub = 0;
+
+                    if (!FLG_LEFT_GC_1st) { // first forward step
+                        Gc_main = 1.0 * (curve_count_main++ % P) / P + 0.4 ;
+                        if (Gc_main >= 1.0)
+                            Gc_main = 1.0;
+
+                        if (Gc_main == 1.0) {
+                            if (GaitPhase == HSHO) {
+                                // means left start new GC
+                                FLG_LEFT_GC_1st = true;
+                                RIGHT_GC_START = true;
+                                curve_count_main = 0;
+                                gMFSM.m_gaitMatrixFsm = HS_HO;
+                            } else if (GaitPhase != HSHO)
+                                curve_count_main--;
+                        }
+                    } else { // normal cyclic walking
+                        Gc_main = 1.0 * (curve_count_main++ % P) / P;
+                        if (Gc_main == 0.0)
+                            if (gMFSM.m_gaitMatrixFsm != HS_HO)  // waiting for <left>[Heel Strike] occur.
+                                curve_count_main--;
+                    }
+
+                    /** Gait Phase FSM **/
+                    switch (GaitPhase) {
+                        case HSHO:
+                            if (gMFSM.m_gaitMatrixFsm == S_ST) {
+                                FLG_LEFT_GC_end = true;
+                                gMFSM.m_gaitMatrixFsm = HS_HO;
+                            }
+                            break;
+                        case STO: {
+                            if ((gMFSM.m_gaitMatrixFsm == HS_HO) || (gMFSM.m_gaitMatrixFsm == Stance))
+                                gMFSM.m_gaitMatrixFsm = ST_T;
+                        }
+                            break;
+                        case SSw:
+                            if (gMFSM.m_gaitMatrixFsm == ST_T)
+                                gMFSM.m_gaitMatrixFsm = ST_S;
+                            break;
+                        case HOHS:
+                            if (gMFSM.m_gaitMatrixFsm == ST_S)
+                                gMFSM.m_gaitMatrixFsm = HO_HS;
+                            break;
+                        case TOS:
+                            if ((gMFSM.m_gaitMatrixFsm == HO_HS) || (gMFSM.m_gaitMatrixFsm == Stance))
+                                gMFSM.m_gaitMatrixFsm = T_ST;
+                            break;
+                        case SwS:
+                            if (gMFSM.m_gaitMatrixFsm == T_ST)
+                                gMFSM.m_gaitMatrixFsm = S_ST;
+                            break;
+                        case doubleStance:
+                            if ((gMFSM.m_gaitMatrixFsm == ST_S) || (gMFSM.m_gaitMatrixFsm == S_ST))
+                                gMFSM.m_gaitMatrixFsm = Stance;
+                            break;
+                        default:
+                            break;
+                    }
 
                     if (!POST_RESET) {
-                        double hip_ref_rad_l = 0.8 * base_Fourier_8th(Gc_main, a_hip, b_hip, w, a0_hip);
-                        double knee_ref_rad_l = beta * base_Fourier_8th(Gc_main, a_knee, b_knee, w, a0_knee);
-                        double ankle_ref_rad_l = 1.5 * base_Fourier_8th(Gc_main, a_ankle, b_ankle, w, a0_ankle);
+                        double hip_ref_rad_l = 0.0 * base_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip);
+                        double knee_ref_rad_l = 0.0 * base_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee);
+                        double ankle_ref_rad_l = 1.0 * base_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle);
 
                         double hip_ref_vel_l =
-                                0.8 * differentia_1st_Fourier_5th(Gc_main, a_hip, b_hip, w, a0_knee, P);
+                                0.0 * differentia_1st_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_knee, P);
                         double knee_ref_vel_l =
-                                beta * differentia_1st_Fourier_5th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                                0.0 * differentia_1st_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_vel_l =
-                                1.5 * differentia_1st_Fourier_5th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
+                                1.0 * differentia_1st_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        double hip_ref_acc_l = 0.8 * differentia_2ed_Fourier_5th(Gc_main, a_hip, b_hip, w, a0_hip, P);
+                        double hip_ref_acc_l =
+                                0.0 * differentia_2ed_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_acc_l =
-                                beta * differentia_2ed_Fourier_5th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                                0.0 * differentia_2ed_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_acc_l =
-                                1.5 * differentia_2ed_Fourier_5th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
+                                1.0 * differentia_2ed_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        double hip_ref_3rd_l = 0.8 * differentia_3rd_Fourier_5th(Gc_main, a_hip, b_hip, w, a0_hip, P);
+                        double hip_ref_3rd_l =
+                                0.0 * differentia_3rd_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_3rd_l =
-                                beta * differentia_3rd_Fourier_5th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                                0.0 * differentia_3rd_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_3rd_l =
-                                1.5 * differentia_3rd_Fourier_5th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
+                                1.0 * differentia_3rd_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        double hip_ref_4th_l = 0.8 * differentia_4th_Fourier_5th(Gc_main, a_hip, b_hip, w, a0_hip, P);
+                        double hip_ref_4th_l =
+                                0.0 * differentia_4th_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_4th_l =
-                                beta * differentia_4th_Fourier_5th(Gc_main, a_knee, b_knee, w, a0_knee, P);
+                                0.0 * differentia_4th_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_4th_l =
-                                1.5 * differentia_4th_Fourier_5th(Gc_main, a_ankle, b_ankle, w, a0_ankle, P);
+                                1.0 * differentia_4th_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        if (RIGHT_GC_START) {
-                            curve_count_sub++;
-                            Gc_sub = 1.0 * (curve_count_sub % P) / P;
-                        } else if (Gc_main > 0.75)
-                            RIGHT_GC_START = true;
-                        else {
-                            Gc_sub = 0;
+                        if (FLG_LEFT_GC_1st) { // left first GC is finished
+                            if (!FLG_RIGHT_GC_1st) { // right first GC is not finished
+                                Gc_sub = 1.0 * (curve_count_sub++ % P) / P + 0.4; // offset = 40% Gc
+                                if (Gc_sub == 1.0) {
+                                    if (GaitPhase == HOHS) { // right heel strike occur
+                                        FLG_RIGHT_GC_1st = true; // FLAG of the end of right 1st GC.
+                                        curve_count_sub = 0;
+                                    } else if (GaitPhase != HOHS)
+                                        curve_count_sub--; // holding
+                                }
+                            } else // right first GC is finished, enter normal walking
+                            {
+                                Gc_sub = 1.0 * (curve_count_sub++ % P) / P;
+                                if (Gc_sub == 1.0 || Gc_sub == 0.0)
+                                    if (gMFSM.m_gaitMatrixFsm != HO_HS)  // wait for Heel strike occur.
+                                        curve_count_sub--;
+                            }
+                        } else { // left first GC is not finished --> hold stance initial pose
+                            Gc_sub = 0.4; // correspond to offset
                         }
 
-                        double hip_ref_rad_r = 0.8 * base_Fourier_8th(Gc_sub, a_hip, b_hip, w, a0_hip);
-                        double knee_ref_rad_r = beta * base_Fourier_8th(Gc_sub, a_knee, b_knee, w, a0_knee);
-                        double Ankle_ref_rad_r = 1.0 * base_Fourier_8th(Gc_sub, a_ankle, b_ankle, w, a0_ankle);
+
+                        double hip_ref_rad_r = 0.8 * base_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip);
+                        double knee_ref_rad_r = base_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee);
+                        double Ankle_ref_rad_r = base_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle);
 
                         double hip_ref_vel_r =
-                                0.8 * differentia_1st_Fourier_5th(Gc_sub, a_hip, b_hip, w, a0_knee, P);
+                                0.8 * differentia_1st_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_knee, P);
                         double knee_ref_vel_r =
-                                beta * differentia_1st_Fourier_5th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                                differentia_1st_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_vel_r =
-                                1.0 * differentia_1st_Fourier_5th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+                                differentia_1st_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        double hip_ref_acc_r = 0.8 * differentia_2ed_Fourier_5th(Gc_sub, a_hip, b_hip, w, a0_hip, P);
-                        double knee_ref_acc_r =
-                                beta * differentia_2ed_Fourier_5th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                        double hip_ref_acc_r =
+                                0.8 * differentia_2ed_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
+                        double knee_ref_acc_r = differentia_2ed_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_acc_r =
-                                1.0 * differentia_2ed_Fourier_5th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+                                differentia_2ed_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        double hip_ref_3rd_r = 0.8 * differentia_3rd_Fourier_5th(Gc_sub, a_hip, b_hip, w, a0_hip, P);
+                        double hip_ref_3rd_r =
+                                0.8 * differentia_3rd_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_3rd_r =
-                                beta * differentia_3rd_Fourier_5th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                                differentia_3rd_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_3rd_r =
-                                1.0 * differentia_3rd_Fourier_5th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+                                differentia_3rd_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
-                        double hip_ref_4th_r = 0.8 * differentia_4th_Fourier_5th(Gc_sub, a_hip, b_hip, w, a0_hip, P);
+                        double hip_ref_4th_r =
+                                0.8 * differentia_4th_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_4th_r =
-                                beta * differentia_4th_Fourier_5th(Gc_sub, a_knee, b_knee, w, a0_knee, P);
+                                differentia_4th_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_4th_r =
-                                1.0 * differentia_4th_Fourier_5th(Gc_sub, a_ankle, b_ankle, w, a0_ankle, P);
+                                differentia_4th_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
 
 #endif
@@ -824,7 +937,7 @@ void cyclic_task(double Kp, double Kd) {
 
                         Eigen::Vector3d M, B_l, K_l, B_r, K_r;
 #ifdef Tracking_Impendance
-                        K_l << 50, 40, 20;
+                        K_l << 40, 40, 20;
                         B_l << 0.6, 0.9, 0.5;// 1.8 1.2 0.6
                         K_r << 50, 40, 20;
                         B_r << 0.8, 0.8, 0.5; // 0.6 0.6 0.5
@@ -883,14 +996,14 @@ void cyclic_task(double Kp, double Kd) {
 //                                                                                Ks_l);
                         compensation_l = left_SEA_dynamics.Gravity_term(q_l);
 
-                        compensation_l = 0.8 * compensation_l; //0.8
+                        compensation_l = 1.0 * compensation_l; //0.8
 
                         l_Hip_pd.pid_set_params(0.5, 0, 4); // 0.6,4 (0.85 boundary)
                         l_Knee_pd.pid_set_params(0.45, 0, 2.5); // 0.45,2.5
                         l_Ankle_pd.pid_set_params(0.5, 0, 3); // 0.45,3
 
                         double l_hip_Impedance =
-                                compensation_l(0) + (B_l(0) * dq_e_l(0) + K_l(0) * q_e_l(0));
+                                0.8 * compensation_l(0) + (B_l(0) * dq_e_l(0) + K_l(0) * q_e_l(0));
                         double l_knee_Impedance =
                                 compensation_l(1) + (B_l(1) * dq_e_l(1) + K_l(1) * q_e_l(1));
                         double l_ankle_Impedance =
@@ -953,11 +1066,6 @@ void cyclic_task(double Kp, double Kd) {
                          **    Apply torque control
                          */
 
-//                        unsigned int An_in = EC_READ_U16(domainTx_pd + offset.analog_in1[l_hip]);
-//
-//                        bool logic_1 = false;
-//                        if (An_in > 200)
-//                            logic_1 = true;
 
 #ifndef asynchronous_enable
 
@@ -982,22 +1090,25 @@ void cyclic_task(double Kp, double Kd) {
 #endif
 
 #ifdef asynchronous_enable
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_hip], CST);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_knee], CST);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_ankle], CST);
+                        if (!FLG_LEFT_GC_1st) {
+                            EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_hip], CST);
+                            EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_knee], CST);
+                            EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_ankle], CST);
+                        }
 //
-                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_hip], tau_dyn_thousand_1);
-                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
-                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
+//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_hip], tau_dyn_thousand_1);
+//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
+//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
 //
                         if (RIGHT_GC_START) {
-                            EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_hip], CST);
-                            EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CST);
-                            EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_ankle], CST);
-//
-                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_hip], tau_dyn_thousand_4);
-                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_knee], tau_dyn_thousand_5);
-                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_ankle], tau_dyn_thousand_6);
+                            if (!FLG_RIGHT_GC_1st) {
+                                EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_hip], CST);
+                                EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CST);
+                                EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_ankle], CST);
+                            }
+//                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_hip], tau_dyn_thousand_4);
+//                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_knee], tau_dyn_thousand_5);
+//                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_ankle], tau_dyn_thousand_6);
                         }
 #endif
                         /** ----------------------------------------------------------------------------------- */
@@ -1059,22 +1170,65 @@ void cyclic_task(double Kp, double Kd) {
                             std::vector<unsigned int>().swap(error_code_sequence);
 
                             std::cout << " ---- Gait Cycle ----" << std::endl;
-                            if (Gc_main < 0.15)
-                                std::cout << "      Mid stance Phase." << std::endl;
-                            else if (Gc_main < 0.35)
-                                std::cout << "      Heel off Phase." << std::endl;
-                            else if (Gc_main < 0.5)
-                                std::cout << "      Toe off Phase." << std::endl;
-                            else if (Gc_main < 0.75)
-                                std::cout << "      Mid Swing Phase." << std::endl;
-                            else if (Gc_main < 0.85)
-                                std::cout << "      Heel Strike Phase." << std::endl;
-                            else if (Gc_main < 1.0)
-                                std::cout << "      Foot flat Phase." << std::endl;
+                            std::cout << Gc_main << std::endl;
 
-                            std::cout << " --------------------- " << std::endl;
+                            if (FLG_LEFT_GC_end) {
+                                Gc_cnt++;
+                                FLG_LEFT_GC_end = false;
+                            }
+                            else {
+//                                std::cout << "Current Gc is not completed." << std::endl;
+                                std::cout << "Current Phase: " << gMFSM.m_gaitMatrixFsm << std::endl;
+                            }
+                            std::cout << "Current Gc is " << Gc_cnt << std::endl;
+
+
+                            switch (gMFSM.m_gaitMatrixFsm) {
+                                // 0 -> [1 -> 2 -> 3 -> 4 -> 5 -> 6]
+                                case Stance: {
+                                    std::cout << "2x stance" << std::endl;
+                                    gaitData << "2x stance" << ',' << Stance << std::endl;
+                                }
+                                    break;
+                                case ST_T: {
+                                    std::cout << "Stance-Toe_off" << std::endl;
+                                    gaitData << "Stance-Toe_off" << ',' << ST_T << std::endl;
+                                }
+                                    break;
+                                case ST_S: {
+                                    std::cout << "Stance-Swing" << std::endl;
+                                    gaitData << "Stance-Swing" << ',' << ST_S << std::endl;
+                                }
+                                    break;
+                                case HO_HS: {
+                                    std::cout << "Heel_off - Heel_strike" << std::endl;
+                                    gaitData << "Heel_off - Heel_strike" << ',' << HO_HS << std::endl;
+                                }
+                                    break;
+                                case HS_HO: {
+                                    std::cout << "Heel_strike - Heel_off" << std::endl;
+                                    gaitData << "Heel_strike - Heel_off" << ',' << HS_HO <<std::endl;
+                                }
+                                    break;
+                                case S_ST: {
+                                    std::cout << "Swing-Stance" << std::endl;
+                                    gaitData << "Swing-Stance" << ',' << S_ST << std::endl;
+                                }
+                                    break;
+                                case T_ST: {
+                                    std::cout << "Toe_off-stance" << std::endl;
+                                    gaitData << "Toe_off-stance" << ',' << T_ST << std::endl;
+                                }
+                                    break;
+                                default:
+                                    break;
+                            }
+//                            std::cout << "GaitPhase : " << GaitPhase << std::endl;
+                            std::cout << "Left #1 :" << An_Left_1 << std::endl;
+                            std::cout << "Left #2 :" << An_Left_2 << std::endl;
+                            std::cout << "Right #1 :" << An_Right_1 << std::endl;
+                            std::cout << "Right #2 :" << An_Right_2 << std::endl;
                         }
-
 
                         left_outFile << hip_ref_rad_l << ',' << knee_ref_rad_l << ',' << ankle_ref_rad_l << ','
                                      << link_1_rad << ',' << link_2_rad << ',' << link_3_rad << ','
@@ -1129,7 +1283,7 @@ void cyclic_task(double Kp, double Kd) {
                         gTaskFsm.m_gtaskFSM = task_working_RESET;
 
                     id_ready_cnt++;
-                    if (curve_count_main >= P * 4) {
+                    if (curve_count_main >= P * (10 + 0.35)) {
                         EtherCAT_ONLINE = false;
                         std::cout << "[End of Program...]" << std::endl;
                         break;
