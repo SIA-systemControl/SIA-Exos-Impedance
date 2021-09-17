@@ -19,9 +19,6 @@
 #include <pthread.h>
 #include <cmath>
 
-// plot
-#include "matplotlibcpp.h"
-
 // FilterData
 #include "Utils.h"
 #include "ButterWorthLP.h"
@@ -59,7 +56,7 @@
 #define TARGET_VELOCITY 100 // PUU (Synapticon default PUU is rpm)
 
 /* NOTICE:
- * Change TASK_FREQUENCY to higher value (3kHz++) may cause losing heartbeats
+ * Change TASK_FREQUENCY to higher value (4kHz++) may cause losing heartbeats
  */
 
 // 1 -- profile position mode
@@ -89,30 +86,30 @@
 
 /** ------ Left Part ----- **/
 
-#define left_hip_init_motor_pos -141886350
-#define left_hip_init_spring_pos 10249
+#define left_hip_init_motor_pos -141904125
+#define left_hip_init_spring_pos 10186
 
 #define left_knee_init_motor_pos -657357980
 #define left_knee_init_spring_pos -3272
 
 /**  Ankle range = (35,-45)  */
-#define left_ankle_init_motor_pos -166115424
-#define left_ankle_init_link_pos 82820
+#define left_ankle_init_motor_pos -166121052
+#define left_ankle_init_link_pos 82844
 
 /** ------ Right Part ----- **/
 
 #define right_hip_init_motor_pos -804194886
 #define right_hip_init_spring_pos -24107
 
-#define right_knee_init_motor_pos 263923337
-#define right_knee_init_spring_pos 48783
+#define right_knee_init_motor_pos 258989895
+#define right_knee_init_spring_pos 48930
 
 #define right_ankle_init_motor_pos 123485603
 #define right_ankle_init_link_pos 179632
 
 #ifdef Tracking_Impendance
 #define left_hip_id_init_rad -0
-#define left_knee_id_init_rad -0.1
+#define left_knee_id_init_rad -0.15
 #define left_ankle_id_init_rad 0.1
 #endif
 
@@ -194,27 +191,29 @@ int reset_step = 0;
 /**
  * Fourier Series of Joint angle (for trajectory)
  */
-double w = 6.3135;  // angle freq  = 2*pi*f where f is base freq
+double w_hip = 6.27659139567477;  // angle freq  = 2*pi*f where f is base freq
+double w_knee = w_hip;  // angle freq  = 2*pi*f where f is base freq
+double w_ankle = w_hip;  // angle freq  = 2*pi*f where f is base freq
 
-double a_hip[5] = {-0.225645227910260, 0.0360304790104519, 0.00254865446903504, -0.000674609864637457,
-                   0.000303965449540142};
-double b_hip[5] = {-0.229796258171504, -0.0118504129599460, 0.0232804665830179, -0.00145849101729699,
-                   -0.00341591222668574};
-double a0_hip = 0.186907486042774;
+double a_hip[8] = {0.308750228166298, -0.0301760062107781, 0.00505607355750842, 0.00159201009938250,
+                   -0.00281684827129251, 0.00129439626305321, -0.00504290840263287, 0.00382003697292678};
+double b_hip[8] = {-0.0917919985841033, -0.0229946587230083, 0.0228749586595578, -8.60002514422098e-05,
+                   0.00199416878210645, -0.00444905211999233, 0.00132143317171056, 0.000876821564775400};
+double a0_hip = 0.187072145486077;
 
-double a_knee[5] = {0.256054901728358, 0.0416086525077705, -0.0160488487863971, -0.0142858881272099,
-                    0.0119322181151623};
-double b_knee[5] = {-0.316157152847513, 0.302818293764027, -0.0941982933401444, -0.0172980940337325,
-                    0.0226773638216534};
-double a0_knee = -0.459374621258486;
+double a_knee[8] = {0.0985635337735540, 0.278740647777703, 0.0286360377526829, 0.0250057934881560, 0.0219855831069594,
+                    0.000554154299564611, 0.00690268692893109, 0.000709369274812899};
+double b_knee[8] = {0.408481929825363, -0.107510874156436, -0.0702907692220593, 0.0143563230603128,
+                    -0.00664071675999920, 0.0125278445195671, 0.0128800581276489, 0.00223652070388307};
+double a0_knee = -0.475945721635276;
 
-double a_ankle[5] = {0.0776424475156062, 0.0590373913244002, -0.0778405785776857, -0.00780036112617600,
-                     0.0171712742398171};
-double b_ankle[5] = {-0.000858549486717277, 0.0804442940262613, 0.0303645920489151, -0.0423382796412941,
-                     -0.000478022710129122};
-double a0_ankle = 0.00382497783967212;
+double a_ankle[8] = {-0.109863815437901, -0.00833917060475227, -0.0989598858020730, 0.0353155563750233,
+                     -0.00891323739557765, 0.00351452349973219, 0.00955865603010861, -0.00393433684806532};
+double b_ankle[8] = {0.0549542830785040, -0.109350901714820, 0.0184124040787744, 0.0114596100947102,
+                     -0.0141854746312045, 0.0107960677657798, -0.00738513480814346, -0.000616125357164900};
+double a0_ankle = -0.0364079750372623;
 
-int P = 4000; // time of Gait Cycle [ms]
+int P = 3000; // time of Gait Cycle [ms]
 
 // Offsets for PDO entries
 static struct {
@@ -250,7 +249,6 @@ static struct {
     unsigned int digital_in4[joint_num];
     /* Error Code */
     unsigned int Error_code[joint_num];
-    unsigned int Error_report[joint_num];
 } offset;
 
 
@@ -314,8 +312,8 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
         {SynapticonSlave1, Synapticon, 0x230A, 0, &offset.second_position[l_hip]},
         {SynapticonSlave1, Synapticon, 0x230B, 0, &offset.second_velocity[l_hip]},
         {SynapticonSlave1, Synapticon, 0x2401, 0, &offset.analog_in1[l_hip]},
+        {SynapticonSlave1, Synapticon, 0x2402, 0, &offset.analog_in2[l_hip]},
         {SynapticonSlave1, Synapticon, 0x603F, 0, &offset.Error_code[l_hip]},
-        {SynapticonSlave1, Synapticon, 0x203F, 1, &offset.Error_report[l_hip]},
 
         // slave - 2
         {SynapticonSlave2, Synapticon, 0x6041, 0, &offset.status_word[l_knee]},
@@ -345,6 +343,8 @@ ec_pdo_entry_reg_t domain_Tx_reg[] = {
         {SynapticonSlave4, Synapticon, 0x6077, 0, &offset.actual_torque[r_hip]},
         {SynapticonSlave4, Synapticon, 0x6064, 0, &offset.actual_position[r_hip]},
         {SynapticonSlave4, Synapticon, 0x606C, 0, &offset.actual_velocity[r_hip]},
+        {SynapticonSlave4, Synapticon, 0x2401, 0, &offset.analog_in1[r_hip]},
+        {SynapticonSlave4, Synapticon, 0x2402, 0, &offset.analog_in2[r_hip]},
 
         {SynapticonSlave4, Synapticon, 0x230A, 0, &offset.second_position[r_hip]},
         {SynapticonSlave4, Synapticon, 0x230B, 0, &offset.second_velocity[r_hip]},
@@ -405,8 +405,8 @@ static ec_pdo_entry_info_t pdo_entries_Tx[] = {
         {0x230A, 0x00, 32},  // Second position
         {0x230B, 0x00, 32},  // Second velocity
         {0x2401, 0x00, 16},  // Analog Input 1
-        {0x603F, 0x00, 16}, // Error code
-        {0x203F, 0x01, 64},
+        {0x2402, 0x00, 16},  // Analog Input 2
+        {0x603F, 0x00, 16},  // Error code
         {}
 };
 

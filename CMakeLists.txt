@@ -1,15 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
-project(SIA_EXOS_Impedance)
+project(SIA_Exos_Gait)
 
 set(CMAKE_CXX_STANDARD 20)
-
-find_package(PythonLibs REQUIRED 2.7)
-
-include_directories(${PYTHON_INCLUDE_DIRS})
 
 INCLUDE_DIRECTORIES(/opt/etherlab/include)
 LINK_DIRECTORIES(/opt/etherlab/lib)
 
-add_executable(SIA_EXOS_Impedance main.cpp matplotlibcpp.h exos.h exos.cpp PID.h Unit.h traj_generate.cpp traj_generate.h ButterWorthLP.h ButterWorthLP.cpp Utils.h dataDecode.h)
+add_executable(SIA_Exos_Gait main.cpp exos.cpp exos.h dynamics.h dataDecode.h ButterWorthLP.cpp ButterWorthLP.h PID.h traj_generate.cpp traj_generate.h Unit.h Utils.h)
 
-target_link_libraries(${PROJECT_NAME} ${PYTHON_LIBRARIES} ethercat pthread)
+target_link_libraries(${PROJECT_NAME} ethercat pthread)
