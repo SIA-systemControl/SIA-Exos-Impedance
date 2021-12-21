@@ -91,6 +91,8 @@ ButterworthLP bw_link = ButterworthLP(1000, 5, 2);
 
 static int SIG_cnt = 0;
 
+double Gc_main = 0;
+double Gc_sub = 0;
 static int Gc_cnt = 0;
 
 Eigen::Matrix2d GaitMatrix;
@@ -171,7 +173,7 @@ void *robotcontrol(void *arg) {
     right_filter_file << "original" << ',' << "cpp filter" << std::endl;
 #endif
 
-    gaitData.open("gaitData.csv",std::ios::out);
+    gaitData.open("gaitData.csv", std::ios::out);
 
     GaitMatrix << 1, 1, 1, 1;
     gMFSM.m_gaitMatrixFsm = Stance;
@@ -208,7 +210,6 @@ void cyclic_task(double Kp, double Kd) {
     static int current_pos = 0;
     int raw_init_motor_pos[joint_num] = {0, 0, 0, 0, 0, 0};
     int raw_init_spring_pos[joint_num] = {0, 0, 0, 0, 0, 0};
-//    bw_link.stepInitialization(0);
 
     if (gSysRunning.m_gWorkStatus == sys_working_POWER_ON)
         return;
@@ -254,7 +255,7 @@ void cyclic_task(double Kp, double Kd) {
 
         case sys_working_OP_MODE: {
             ecstate++;
-            if (SERVE_OP < active_num) {
+            if (SERVE_OP < active_num) { // Traverse all slave(s)
                 if (ecstate <= 10) {
                     switch (ecstate) {
                         case 1:
@@ -268,7 +269,6 @@ void cyclic_task(double Kp, double Kd) {
                                                   0x0080));
                                 } // bit7 set to 1 to reset fault
                                 EC_WRITE_U8(domainRx_pd + offset.operation_mode[i], CSP);
-
                             }
                             break;
                         case 7:
@@ -294,7 +294,7 @@ void cyclic_task(double Kp, double Kd) {
                         }
                     }
                 }
-            } else {
+            } else { // all slave(s) change ethercat FSM to OP-enable, then check slave(s) status
                 int tmp = true;
                 for (int i = 0; i < active_num; i++) {
                     unsigned int cur_status = EC_READ_U16(domainTx_pd + offset.status_word[i]);
@@ -303,29 +303,11 @@ void cyclic_task(double Kp, double Kd) {
                     if ((EC_READ_U16(domainTx_pd + offset.status_word[i]) & 0x6f) == 0x27)
                         std::cout << "Slave [" << i << "] Enable operation" << std::endl;
                     else {
-                        std::cout << "Slave [" << i << "] not in Enable operation" << std::endl;
-
+                        std::cout << "Slave [" << i << "] not in <Enable Operation>" << std::endl;
                         std::cout << "Slave [" << i << "] State: " << cur_status << std::endl;
                         std::cout << "Slave [" << i << "] E-code: " << E_code << std::endl;
-                        switch (E_code) {
-                            case 0x7500:
-                                std::cout << " Communication Error." << std::endl;
-                                break;
-                            case 0x7300:
-                                std::cout << " Sensor Error(Maybe CRC)." << std::endl;
-                                break;
-                            case 0x2220:
-                                std::cout << " Continuous over current" << std::endl;
-                                break;
-                            case 0x3331:
-                                std::cout << " Field circuit interrupted" << std::endl;
-                                break;
-                            default:
-                                std::cout << " Other Error. (ref to datasheet)" << std::endl;
-                                break;
-                        }
+                        ErrorParse(E_code);
                     }
-
 
                     if ((EC_READ_U16(domainTx_pd + offset.status_word[i]) & (STATUS_SERVO_ENABLE_BIT)) == 0) {
                         tmp = false;
@@ -335,37 +317,21 @@ void cyclic_task(double Kp, double Kd) {
                 }
                 if (tmp) {
                     ecstate = 0;
-                    gSysRunning.m_gWorkStatus = sys_working_WORK_STATUS;
-                    std::cout << "sys_working_WORK_STATUS" << std::endl;
+                    gSysRunning.m_gWorkStatus = sys_working_WORK_MODE;
+                    std::cout << "sys_working_WORK_MODE" << std::endl;
                 }
             }
         }
             break;
 
-        default: {
+        case sys_working_WORK_MODE: {
             static int reset_ready_cnt = 0;
             static int id_ready_cnt = 0;
-            static int left_hip_id_init_cnt = 0;
-            static int left_knee_id_init_cnt = 0;
-            static int left_ankle_id_init_cnt = 0;
-#ifdef Right_Part
-            static int right_hip_id_init_cnt = 0;
-            static int right_knee_id_init_cnt = 0;
-            static int right_ankle_id_init_cnt = 0;
-#endif
-
-            static double vel_m_hip_old = 0;
-            static double vel_m_knee_old = 0;
-            static double vel_m_ankle_old = 0;
-            static double ankle_l_vel_old = 0;
 
             static int PD_cnt = 0;
-            static int post_reset_cnt = 0;
-
             static int reset_timeout = 3000;
 
             /** Preprocess of data */
-
             /**
              * Encoder cnt (Raw)
              */
@@ -427,11 +393,11 @@ void cyclic_task(double Kp, double Kd) {
 #endif
 
             /**
-             * Derived data
+             * Data Processing
              */
 
             /**
-             * Motor radians after transmission
+             * Motor radians after reducer transmission
              */
             double lever_arm_1_rad = pos_inc2rad_17bits(absolute_pos_motor_1 / transmission_hip);
             double lever_arm_2_rad = pos_inc2rad_17bits(absolute_pos_motor_2 / transmission_knee);
@@ -444,7 +410,7 @@ void cyclic_task(double Kp, double Kd) {
 
             /**
              * Link radians ( alpha = theta - q_l ---> q_l = theta - alpha)
-             * Here  speeder_ankle is 140:40
+             * Here speeder_ankle is 140:40 caused by encoder Pulley
              */
 
             double link_1_rad = lever_arm_1_rad - pos_inc2rad_17bits(absolute_pos_spring_1);
@@ -457,14 +423,15 @@ void cyclic_task(double Kp, double Kd) {
 #endif
 
             /**
-             * Velocity(RPM integer based)
+             * Velocity [RPM]
              */
             double lever_arm_1_vel = raw_vel_motor_1 / transmission_hip;
             double lever_arm_2_vel = raw_vel_motor_2 / transmission_knee;
             double lever_arm_3_vel = raw_vel_motor_3 / transmission_ankle;
 
             double link_1_vel = lever_arm_1_vel - raw_vel_spring_1;
-            double link_2_vel = lever_arm_2_vel + raw_vel_spring_2;
+            double link_2_vel = lever_arm_2_vel +
+                                raw_vel_spring_2; // TODO: minus/plus is decided by the configuration of encoder polarity
             double link_3_vel = speeder_ankle * raw_vel_encoder_3;
 #ifdef Right_Part
             double lever_arm_4_vel = raw_vel_motor_4 / transmission_hip;
@@ -477,7 +444,7 @@ void cyclic_task(double Kp, double Kd) {
 #endif
 
             /**
-             * thousand ratio of rated torque
+             * Per thousand of Rated Torque
              */
             double tau_mot_1 = EC_READ_S16(domainTx_pd + offset.actual_torque[l_hip]);
             double tau_mot_2 = EC_READ_S16(domainTx_pd + offset.actual_torque[l_knee]);
@@ -486,72 +453,48 @@ void cyclic_task(double Kp, double Kd) {
             double tau_mot_5 = EC_READ_S16(domainTx_pd + offset.actual_torque[r_knee]);
             double tau_mot_6 = EC_READ_S16(domainTx_pd + offset.actual_torque[r_ankle]);
 
+            /** Task FSM = (RESET = 0, CONTROL = 1)
+             *   =================
+             *   | ---- [Loop 2] ---- |
+             *   |                    v
+             *   0 --> 1 -[Loop 1]-> EOP
+             *   ^     |
+             *   | <-- |
+             *   =================
+             *   Loop 1 := Normal processing still running to prescribed time-stamp
+             *   Loop 2 := Interrupt by Ctrl-C and then process post-reset
+             */
+
             switch (gTaskFsm.m_gtaskFSM) {
                 case task_working_RESET: {
 
-                    /** A. Reset to default motor position(vertical direction as reference link) */
+                    /** A. Reset to perscribed motor position (vertical direction as reference zero [rad] ) */
                     if (!(cycle_count % 10)) { // show message per 1 ms.
                         std::cout << "=====================" << std::endl;
                         std::cout << "task_working_RESET" << std::endl;
                         std::cout << "Time : " << PD_cnt / TASK_FREQUENCY << "[s]" << std::endl;
                         std::cout << "=====================" << std::endl;
-                        std::cout << "rad of link-4: " << link_4_rad << "[rad]" << std::endl;
-                        std::cout << "rad of link-5: " << link_5_rad << "[rad]" << std::endl;
-                        std::cout << "rad of link-6: " << link_6_rad << "[rad]" << std::endl;
-                        std::cout << "vel of link-4: " << link_4_vel << "[rad]" << std::endl;
-                        std::cout << "vel of link-5: " << link_5_vel << "[rad]" << std::endl;
-                        std::cout << "vel of link-6: " << link_6_vel << "[rad]" << std::endl;
-
-                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[r_knee])
-                                  << std::endl;
-                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[r_knee])
-                                  << std::endl;
-
-                        for (int i = 0; i < active_num; i++) {
-                            unsigned int E_code = EC_READ_U16(domainTx_pd + offset.Error_code[i]);
-                            switch (E_code) {
-                                case 0x7500:
-                                    std::cout << " Communication Error." << std::endl;
-                                    break;
-                                case 0x7300:
-                                    std::cout << " Sensor Error(Maybe CRC)." << std::endl;
-                                    break;
-                                case 0x2220:
-                                    std::cout << "  Continuous over current" << std::endl;
-                                    break;
-                                case 0x0000:
-                                    std::cout << "  No Fault." << std::endl;
-                                    break;
-                                case 0x3331:
-                                    std::cout << " Field circuit interrupted" << std::endl;
-                                    break;
-                                default:
-                                    std::cout << " Other Error. (ref to datasheet)" << std::endl;
-                                    break;
-                            }
-                        }
-                    }
-
-//                    while(EtherCAT_ONLINE){
+//                  Following output can be used for [Calibrating]
 //                        std::cout << "spr cnt: " << EC_READ_S32(domainTx_pd + offset.second_position[r_knee])
 //                                  << std::endl;
 //                        std::cout << "motor cnt:" << EC_READ_S32(domainTx_pd + offset.actual_position[r_knee])
 //                                  << std::endl;
-//                    }
+
+                        for (int i = 0; i < active_num; i++) {
+                            unsigned int E_code = EC_READ_U16(domainTx_pd + offset.Error_code[i]);
+                            ErrorParse(E_code);
+                        }
+                    }
 
                     if (reset_step == 0) {
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_hip], CSV);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_knee], CSV);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_ankle], CSV);
+                        Change_one_side_OP_mode(left, CSV);
 #ifdef Right_Part
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_hip], CSV);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CSV);
-                        EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_ankle], CSV);
+                        Change_one_side_OP_mode(right, CSV);
 #endif
                         reset_step = 1;
                     }
                     /**
-                     * Step1 reset l_hip and hold reset-point
+                     *  reset and hold reset-point
                      */
                     if (reset_step == 1 &&
                         reset_ready_cnt != 0) { // reset_ready_cnt != 0 avoid assigning velocity in CSP mode.
@@ -565,7 +508,9 @@ void cyclic_task(double Kp, double Kd) {
 
 //                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_hip], reset_l_hip_vel);
 //                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_knee], reset_l_knee_vel);
-                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_ankle], reset_l_ankle_vel);
+                        Assign_slave_Velocity(l_hip, reset_l_hip_vel);
+                        Assign_slave_Velocity(l_knee, reset_l_knee_vel);
+                        Assign_slave_Velocity(l_ankle, reset_l_ankle_vel);
 
 #ifdef Right_Part
                         double reset_r_hip_vel = r_Hip_reset_pid.pid_control(right_hip_id_init_rad,
@@ -575,39 +520,25 @@ void cyclic_task(double Kp, double Kd) {
                         double reset_r_ankle_vel = r_Ankle_reset_pid.pid_control(right_ankle_id_init_rad,
                                                                                  link_6_rad,
                                                                                  2200);
-
-                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[r_hip], reset_r_hip_vel);
-                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[r_knee], reset_r_knee_vel);
-                        EC_WRITE_S32(domainRx_pd + offset.target_velocity[r_ankle], reset_r_ankle_vel);
+                        Assign_slave_Velocity(r_hip, reset_r_hip_vel);
+                        Assign_slave_Velocity(r_knee, reset_r_knee_vel);
+                        Assign_slave_Velocity(r_ankle, reset_r_ankle_vel);
 #endif
 
                         if (PD_cnt++ > reset_timeout) {
                             // if timeout, force switch state machine.
-                            EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_hip], 0);
-                            EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_knee], 0);
-                            EC_WRITE_S32(domainRx_pd + offset.target_velocity[l_ankle], 0);
-
-                            left_hip_id_init_cnt = EC_READ_S32(domainTx_pd + offset.actual_position[l_hip]);
-                            left_knee_id_init_cnt = EC_READ_S32(domainTx_pd + offset.actual_position[l_knee]);
-                            left_ankle_id_init_cnt = EC_READ_S32(domainTx_pd + offset.actual_position[l_ankle]);
+                            Assign_side_slaves_zero_velocity(left);
 #ifdef Right_Part
-                            EC_WRITE_S32(domainRx_pd + offset.target_velocity[r_hip], 0);
-                            EC_WRITE_S32(domainRx_pd + offset.target_velocity[r_hip], 0);
-                            EC_WRITE_S32(domainRx_pd + offset.target_velocity[r_hip], 0);
-
-                            right_hip_id_init_cnt = EC_READ_S32(domainTx_pd + offset.actual_position[r_hip]);
-                            right_knee_id_init_cnt = EC_READ_S32(domainTx_pd + offset.actual_position[r_knee]);
-                            right_ankle_id_init_cnt = EC_READ_S32(domainTx_pd + offset.actual_position[r_ankle]);
+                            Assign_side_slaves_zero_velocity(right);
 #endif
                             if (SIG_cnt == 0) {
-                                gTaskFsm.m_gtaskFSM = task_working_Control;
+                                gTaskFsm.m_gtaskFSM = task_working_Control; //  Task FSM: [0] -> [1]
                                 reset_step = 0;
                                 reset_ready_cnt = 0;
                                 PD_cnt = 0;
-                                reset_timeout = 2000;
+                                reset_timeout = 3000;
                             } else
                                 EtherCAT_ONLINE = false;
-
                         }
                     }
                     reset_ready_cnt++;
@@ -616,41 +547,22 @@ void cyclic_task(double Kp, double Kd) {
 
                 case task_working_Control: {
 
+                    /**
+                     * obtain GRF information and detect gait phase
+                     */
                     unsigned int An_Left_1 = EC_READ_U16(domainTx_pd + offset.analog_in1[l_hip]);
                     unsigned int An_Left_2 = EC_READ_U16(domainTx_pd + offset.analog_in2[l_hip]);
                     unsigned int An_Right_1 = EC_READ_U16(domainTx_pd + offset.analog_in1[r_hip]);
                     unsigned int An_Right_2 = EC_READ_U16(domainTx_pd + offset.analog_in2[r_hip]);
 
                     GaitMatrix = UpdateGaitMatrix(An_Left_1, An_Left_2, An_Right_1, An_Right_2);
-
-
+                    int GaitPhase = GaitMatrixParse(GaitMatrix);
 
                     /** B. Assign operation to motor(s) */
 
                     /** count for generated curve */
-                    static double Gc_main = 0.8;;
-                    static int curve_count_main = 0;   // unit(ms)
-                    static int curve_count_sub = 0;   // unit(ms)
-                    static int settle_cnt = 0;
-                    static float max_err = 0;
-                    static double l_hip_rad_old = 0;
-                    static double l_hip_vel_old = 0;
-                    static double l_knee_rad_old = 0;
-                    static double l_knee_vel_old = 0;
-                    static double l_ankle_rad_old = 0;
-                    static double l_ankle_vel_old = 0;
-#ifdef Right_Part
-                    static double r_hip_rad_old = 0;
-                    static double r_hip_vel_old = 0;
-                    static double r_knee_rad_old = 0;
-                    static double r_knee_vel_old = 0;
-                    static double r_ankle_rad_old = 0;
-                    static double r_ankle_vel_old = 0;
-#endif
-                    static double tau_dyn_1_old = 0;
-                    static double tau_dyn_2_old = 0;
-
-
+                    static int curve_count_main = 0;   // [ms]
+                    static int curve_count_sub = 0;   //  [ms]
 #ifdef SineWave
                     //                    if(!(curve_count_main % 1000))
                     //                        freq += 0.5;
@@ -667,154 +579,196 @@ void cyclic_task(double Kp, double Kd) {
                     double knee_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, -0);
                     double ankle_ref_acc = pow(2 * Pi * freq, 2) * cosineWave(curve_count_main, freq, 0.2);
 #else
-
-                    int GaitPhase = GaitMatrixParse(GaitMatrix);
-
                     double beta = 0.8;
-                    double Gc_sub = 0;
+
+                    // 1st Gc start at 40%
+                    // --> a little bit early than TO
+                    // --> <TO,stance> == 45%
+                    // Select offset = 5%
+                    // TODO: accurate offset is necessary?
+
+                    /**
+                     *  when FLG_LEFT_GC_1st == false
+                     *  --> corresponding timing of std.Gc is about 40%, so the offset of curve is it.
+                     *  --> when Gc is over 100%, there are 2 case:
+                     *  ----> (Gait Phase == HS_HO) indicates next Gc is beginning, reset curve_count and switch gMFSM to HS_HO
+                     *  ----> (Gait Phase != HS_HO) indicates the desired trajectory of Exos is ended but the motion of human limb isn't, desired trajectory must pause.
+                     *  TODO: Here I used GaitPhase to detect HSHO phase first, rather than gMFSM
+                     *        the difference of GaitPhase and gMFSM is that:
+                     *        --> GaitPhase is real-time and is not in sequence
+                     *        --> gMFSM is strictly in sequence
+                     *        <- the (if-else) FLG_LEFT_GC_1st operation does need gMFSM ?? ->
+                     *        The current logic is that select first HS_HO as gMFSM start-point
+                     *        however the 2xstance FSM doesn't use.
+                     */
 
                     if (!FLG_LEFT_GC_1st) { // first forward step
-                        Gc_main = 1.0 * (curve_count_main++ % P) / P + 0.4 ;
-                        if (Gc_main >= 1.0)
-                            Gc_main = 1.0;
-
-                        if (Gc_main == 1.0) {
-                            if (GaitPhase == HSHO) {
-                                // means left start new GC
-                                FLG_LEFT_GC_1st = true;
-                                RIGHT_GC_START = true;
-                                curve_count_main = 0;
-                                gMFSM.m_gaitMatrixFsm = HS_HO;
-                            } else if (GaitPhase != HSHO)
-                                curve_count_main--;
+                        Gc_main = 1.0 * (curve_count_main % P) / P + 0.4;
+                        if (Gc_main >= 1.0) {
+//                            if (GaitPhase == HSHO) {
+                            // means left start new GC
+                            Gc_main = 0;
+                            FLG_LEFT_GC_1st = true;
+                            RIGHT_GC_START = true;
+                            curve_count_main = 0;
+//                            gMFSM.m_gaitMatrixFsm = HS_HO;
                         }
+//                            else if (GaitPhase != HSHO)
+//                                curve_count_main--;
+//                        }
                     } else { // normal cyclic walking
-                        Gc_main = 1.0 * (curve_count_main++ % P) / P;
+                        /**
+                         * when FLG_LEFT_GC_1st == true
+                         * indicates that the gMFSM changed from [2xstance] to [HS_HO]
+                         * the normal Gc is start. since the mod operator(%), the Gc_main will not reach 1.0 ( rather than 0.0 )
+                         * Detectint event:
+                         * --> when (Gc_main == 0.0), dose (gMFSM == HS_HO)?
+                         * ----> if not -->  hold curve_count;
+                         * ----> else   -->  enter next Gait cycle
+                         * Since the gFSM is strictly in sequence. the next HS_HO indicates last GC is completed.
+                         */
+                        Gc_main = 1.0 * (curve_count_main % P) / P;
                         if (Gc_main == 0.0)
-                            if (gMFSM.m_gaitMatrixFsm != HS_HO)  // waiting for <left>[Heel Strike] occur.
-                                curve_count_main--;
+//                            if (gMFSM.m_gaitMatrixFsm != HS_HO)  // waiting for <left>[Heel Strike] occur.
+                            curve_count_main = 0;
                     }
+
+                    curve_count_main++;
 
                     /** Gait Phase FSM **/
-                    switch (GaitPhase) {
-                        case HSHO:
-                            if (gMFSM.m_gaitMatrixFsm == S_ST) {
-                                FLG_LEFT_GC_end = true;
-                                gMFSM.m_gaitMatrixFsm = HS_HO;
-                            }
-                            break;
-                        case STO: {
-                            if ((gMFSM.m_gaitMatrixFsm == HS_HO) || (gMFSM.m_gaitMatrixFsm == Stance))
-                                gMFSM.m_gaitMatrixFsm = ST_T;
-                        }
-                            break;
-                        case SSw:
-                            if (gMFSM.m_gaitMatrixFsm == ST_T)
-                                gMFSM.m_gaitMatrixFsm = ST_S;
-                            break;
-                        case HOHS:
-                            if (gMFSM.m_gaitMatrixFsm == ST_S)
-                                gMFSM.m_gaitMatrixFsm = HO_HS;
-                            break;
-                        case TOS:
-                            if ((gMFSM.m_gaitMatrixFsm == HO_HS) || (gMFSM.m_gaitMatrixFsm == Stance))
-                                gMFSM.m_gaitMatrixFsm = T_ST;
-                            break;
-                        case SwS:
-                            if (gMFSM.m_gaitMatrixFsm == T_ST)
-                                gMFSM.m_gaitMatrixFsm = S_ST;
-                            break;
-                        case doubleStance:
-                            if ((gMFSM.m_gaitMatrixFsm == ST_S) || (gMFSM.m_gaitMatrixFsm == S_ST))
-                                gMFSM.m_gaitMatrixFsm = Stance;
-                            break;
-                        default:
-                            break;
-                    }
+//                    switch (GaitPhase) {
+//                        case HSHO:
+//                            if (gMFSM.m_gaitMatrixFsm == S_ST) {
+//                                FLG_LEFT_GC_end = true;
+//                                gMFSM.m_gaitMatrixFsm = HS_HO;
+//                            }
+//                            break;
+//                        case STO: {
+//                            if ((gMFSM.m_gaitMatrixFsm == HS_HO) || (gMFSM.m_gaitMatrixFsm == Stance))
+//                                gMFSM.m_gaitMatrixFsm = ST_T;
+//                        }
+//                            break;
+//                        case SSw:
+//                            if (gMFSM.m_gaitMatrixFsm == ST_T)
+//                                gMFSM.m_gaitMatrixFsm = ST_S;
+//                            break;
+//                        case HOHS:
+//                            if (gMFSM.m_gaitMatrixFsm == ST_S)
+//                                gMFSM.m_gaitMatrixFsm = HO_HS;
+//                            break;
+//                        case TOS:
+//                            if ((gMFSM.m_gaitMatrixFsm == HO_HS) || (gMFSM.m_gaitMatrixFsm == Stance))
+//                                gMFSM.m_gaitMatrixFsm = T_ST;
+//                            break;
+//                        case SwS:
+//                            if (gMFSM.m_gaitMatrixFsm == T_ST)
+//                                gMFSM.m_gaitMatrixFsm = S_ST;
+//                            break;
+//                        case doubleStance:
+//                            if ((gMFSM.m_gaitMatrixFsm == ST_S) || (gMFSM.m_gaitMatrixFsm == S_ST))
+//                                gMFSM.m_gaitMatrixFsm = Stance;
+//                            break;
+//                        default:
+//                            break;
+//                    }
 
                     if (!POST_RESET) {
-                        double hip_ref_rad_l = 0.0 * base_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip);
-                        double knee_ref_rad_l = 0.0 * base_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee);
+                        double hip_ref_rad_l = 0.6 * base_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip);
+                        double knee_ref_rad_l = 0.6 * base_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee);
                         double ankle_ref_rad_l = 1.0 * base_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle);
 
                         double hip_ref_vel_l =
-                                0.0 * differentia_1st_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_knee, P);
+                                0.6 * differentia_1st_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_knee, P);
                         double knee_ref_vel_l =
-                                0.0 * differentia_1st_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_1st_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_vel_l =
                                 1.0 * differentia_1st_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
                         double hip_ref_acc_l =
-                                0.0 * differentia_2ed_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
+                                0.6 * differentia_2ed_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_acc_l =
-                                0.0 * differentia_2ed_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_2ed_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_acc_l =
                                 1.0 * differentia_2ed_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
                         double hip_ref_3rd_l =
-                                0.0 * differentia_3rd_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
+                                0.6 * differentia_3rd_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_3rd_l =
-                                0.0 * differentia_3rd_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_3rd_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_3rd_l =
                                 1.0 * differentia_3rd_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
                         double hip_ref_4th_l =
-                                0.0 * differentia_4th_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
+                                0.6 * differentia_4th_Fourier_8th(Gc_main, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_4th_l =
-                                0.0 * differentia_4th_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_4th_Fourier_8th(Gc_main, a_knee, b_knee, w_knee, a0_knee, P);
                         double ankle_ref_4th_l =
                                 1.0 * differentia_4th_Fourier_8th(Gc_main, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
+                        /**
+                         * the configuration of Paradigm is [left first]
+                         * --> which indicates the right motion must waiting left finished first Gc.
+                         * --> when (FLG_LEFT_GC_1st == False)
+                         * ----> hold 2xStance percent (40%) of right limb Gc ( here right limb share same gait curve prototype with left one)
+                         * --> whne (FLG_LEFT_GC_1st == True)
+                         * ----> repeat operation as left one.
+                         */
                         if (FLG_LEFT_GC_1st) { // left first GC is finished
                             if (!FLG_RIGHT_GC_1st) { // right first GC is not finished
-                                Gc_sub = 1.0 * (curve_count_sub++ % P) / P + 0.4; // offset = 40% Gc
-                                if (Gc_sub == 1.0) {
-                                    if (GaitPhase == HOHS) { // right heel strike occur
-                                        FLG_RIGHT_GC_1st = true; // FLAG of the end of right 1st GC.
-                                        curve_count_sub = 0;
-                                    } else if (GaitPhase != HOHS)
-                                        curve_count_sub--; // holding
+                                Gc_sub = 1.0 * (curve_count_sub % P) / P + 0.4; // offset = 40% Gc
+                                if (Gc_sub >= 1.0) {
+//                                    if (GaitPhase == HOHS) { // right heel strike occur
+                                    Gc_sub = 0.0;
+                                    FLG_RIGHT_GC_1st = true; // FLAG of the end of right 1st GC.
+                                    curve_count_sub = 0;
+//                                    }
+//                                    else if (GaitPhase != HOHS)
+//                                        curve_count_sub--; // holding
                                 }
                             } else // right first GC is finished, enter normal walking
                             {
-                                Gc_sub = 1.0 * (curve_count_sub++ % P) / P;
+                                Gc_sub = 1.0 * (curve_count_sub % P) / P;
                                 if (Gc_sub == 1.0 || Gc_sub == 0.0)
-                                    if (gMFSM.m_gaitMatrixFsm != HO_HS)  // wait for Heel strike occur.
-                                        curve_count_sub--;
+//                                    if (gMFSM.m_gaitMatrixFsm != HO_HS)  // wait for Heel strike occur.
+                                    curve_count_sub = 0;
                             }
                         } else { // left first GC is not finished --> hold stance initial pose
                             Gc_sub = 0.4; // correspond to offset
                         }
 
+                        if (FLG_LEFT_GC_1st)
+                            curve_count_sub++;
 
-                        double hip_ref_rad_r = 0.8 * base_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip);
-                        double knee_ref_rad_r = base_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee);
+
+                        double hip_ref_rad_r = 0.6 * base_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip);
+                        double knee_ref_rad_r = 0.6 * base_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee);
                         double Ankle_ref_rad_r = base_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle);
 
                         double hip_ref_vel_r =
-                                0.8 * differentia_1st_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_knee, P);
+                                0.6 * differentia_1st_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_knee, P);
                         double knee_ref_vel_r =
-                                differentia_1st_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_1st_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_vel_r =
                                 differentia_1st_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
                         double hip_ref_acc_r =
-                                0.8 * differentia_2ed_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
-                        double knee_ref_acc_r = differentia_2ed_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_2ed_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
+                        double knee_ref_acc_r =
+                                0.6 * differentia_2ed_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_acc_r =
                                 differentia_2ed_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
                         double hip_ref_3rd_r =
-                                0.8 * differentia_3rd_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
+                                0.6 * differentia_3rd_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_3rd_r =
-                                differentia_3rd_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_3rd_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_3rd_r =
                                 differentia_3rd_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
                         double hip_ref_4th_r =
-                                0.8 * differentia_4th_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
+                                0.6 * differentia_4th_Fourier_8th(Gc_sub, a_hip, b_hip, w_hip, a0_hip, P);
                         double knee_ref_4th_r =
-                                differentia_4th_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
+                                0.6 * differentia_4th_Fourier_8th(Gc_sub, a_knee, b_knee, w_knee, a0_knee, P);
                         double Ankle_ref_4th_r =
                                 differentia_4th_Fourier_8th(Gc_sub, a_ankle, b_ankle, w_ankle, a0_ankle, P);
 
@@ -1096,9 +1050,9 @@ void cyclic_task(double Kp, double Kd) {
                             EC_WRITE_S8(domainRx_pd + offset.operation_mode[l_ankle], CST);
                         }
 //
-//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_hip], tau_dyn_thousand_1);
-//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
-//                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
+                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_hip], tau_dyn_thousand_1);
+                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_knee], tau_dyn_thousand_2);
+                        EC_WRITE_S16(domainRx_pd + offset.target_torque[l_ankle], tau_dyn_thousand_3);
 //
                         if (RIGHT_GC_START) {
                             if (!FLG_RIGHT_GC_1st) {
@@ -1106,9 +1060,9 @@ void cyclic_task(double Kp, double Kd) {
                                 EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_knee], CST);
                                 EC_WRITE_S8(domainRx_pd + offset.operation_mode[r_ankle], CST);
                             }
-//                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_hip], tau_dyn_thousand_4);
-//                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_knee], tau_dyn_thousand_5);
-//                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_ankle], tau_dyn_thousand_6);
+                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_hip], tau_dyn_thousand_4);
+                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_knee], tau_dyn_thousand_5);
+                            EC_WRITE_S16(domainRx_pd + offset.target_torque[r_ankle], tau_dyn_thousand_6);
                         }
 #endif
                         /** ----------------------------------------------------------------------------------- */
@@ -1175,8 +1129,7 @@ void cyclic_task(double Kp, double Kd) {
                             if (FLG_LEFT_GC_end) {
                                 Gc_cnt++;
                                 FLG_LEFT_GC_end = false;
-                            }
-                            else {
+                            } else {
 //                                std::cout << "Current Gc is not completed." << std::endl;
                                 std::cout << "Current Phase: " << gMFSM.m_gaitMatrixFsm << std::endl;
                             }
@@ -1207,7 +1160,7 @@ void cyclic_task(double Kp, double Kd) {
                                     break;
                                 case HS_HO: {
                                     std::cout << "Heel_strike - Heel_off" << std::endl;
-                                    gaitData << "Heel_strike - Heel_off" << ',' << HS_HO <<std::endl;
+                                    gaitData << "Heel_strike - Heel_off" << ',' << HS_HO << std::endl;
                                 }
                                     break;
                                 case S_ST: {
