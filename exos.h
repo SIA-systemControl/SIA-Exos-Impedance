@@ -46,6 +46,9 @@
 
 #include <vector>
 
+// Slave(s) Error Parse
+#include "ErrorParse.h"
+
 #define left  true
 #define right false
 
@@ -86,26 +89,26 @@
 
 /** ------ Left Part ----- **/
 
-#define left_hip_init_motor_pos -141904125
-#define left_hip_init_spring_pos 10186
+#define left_hip_init_motor_pos -142703165
+#define left_hip_init_spring_pos 42322
 
-#define left_knee_init_motor_pos -657357980
-#define left_knee_init_spring_pos -3272
+#define left_knee_init_motor_pos -657451167
+#define left_knee_init_spring_pos -3206
 
 /**  Ankle range = (35,-45)  */
-#define left_ankle_init_motor_pos -166121052
-#define left_ankle_init_link_pos 82844
+#define left_ankle_init_motor_pos -154667671
+#define left_ankle_init_link_pos 82443
 
 /** ------ Right Part ----- **/
 
-#define right_hip_init_motor_pos -804194886
-#define right_hip_init_spring_pos -24107
+#define right_hip_init_motor_pos -804143624
+#define right_hip_init_spring_pos -23821
 
-#define right_knee_init_motor_pos 258989895
-#define right_knee_init_spring_pos 48930
+#define right_knee_init_motor_pos 259479224
+#define right_knee_init_spring_pos 49030
 
-#define right_ankle_init_motor_pos 123485603
-#define right_ankle_init_link_pos 179632
+#define right_ankle_init_motor_pos 122718707
+#define right_ankle_init_link_pos 179652
 
 #ifdef Tracking_Impendance
 #define left_hip_id_init_rad -0
@@ -163,7 +166,7 @@ typedef enum _workingStatus {
     sys_working_SAFE_MODE,
     sys_working_OP_MODE,
     sys_working_LINK_DOWN,
-    sys_working_WORK_STATUS,
+    sys_working_WORK_MODE,
     sys_woring_INIT_Failed
 } workingStatus;
 
@@ -624,6 +627,93 @@ int ActivateMaster(void) {
 
     return 0;
 }
+
+// =================== Interface ======================
+// ----------------------------------------------------
+// =================== Change OP mode ==================
+inline void Change_slave_OP_mode(int slave_port, int mode) {
+    EC_WRITE_S8(domainRx_pd + offset.operation_mode[slave_port], mode);
+}
+
+void Change_one_side_OP_mode(bool side, int mode) {
+    if (left == side) {
+        Change_slave_OP_mode(l_hip, mode);
+        Change_slave_OP_mode(l_knee, mode);
+        Change_slave_OP_mode(l_ankle, mode);
+    } else if (right == side) {
+        Change_slave_OP_mode(r_hip, mode);
+        Change_slave_OP_mode(r_knee, mode);
+        Change_slave_OP_mode(r_ankle, mode);
+    }
+};
+
+void Change_all_slaves_OP_mode(int mode) {
+    Change_slave_OP_mode(l_hip, mode);
+    Change_slave_OP_mode(l_knee, mode);
+    Change_slave_OP_mode(l_ankle, mode);
+    Change_slave_OP_mode(r_hip, mode);
+    Change_slave_OP_mode(r_knee, mode);
+    Change_slave_OP_mode(r_ankle, mode);
+};
+
+// ----------------------------------------------------
+// =================== Assign Vel [RPM]=====================
+inline void Assign_slave_Velocity(int slave_port, double target_velocity) {
+    int mode = EC_READ_S8(domainTx_pd + offset.modes_of_operation_display[slave_port]);
+
+    if (CSV == mode)
+        EC_WRITE_S32(domainRx_pd + offset.target_velocity[slave_port], target_velocity);
+    else {
+        std::cout << "Assign action doesn't match current operation mode." << std::endl;
+        EC_WRITE_S8(domainRx_pd + offset.operation_mode[slave_port], CSV);
+        EC_WRITE_S32(domainRx_pd + offset.target_velocity[slave_port], target_velocity);
+    }
+}
+
+void Assign_side_slaves_zero_velocity(bool side) {
+    if (left == side) {
+        Assign_slave_Velocity(l_hip, 0);
+        Assign_slave_Velocity(l_knee,0);
+        Assign_slave_Velocity(l_ankle,0);
+    }else if(right == side){
+        Assign_slave_Velocity(r_hip, 0);
+        Assign_slave_Velocity(r_knee,0);
+        Assign_slave_Velocity(r_ankle,0);
+    }
+}
+
+// -------------------------------------------------------
+// =================== Assign Torque [per thousand]=====================
+
+inline void Assign_slave_Torque(int slave_port, int target_Torque) {
+    int mode = EC_READ_S8(domainTx_pd + offset.modes_of_operation_display[slave_port]);
+
+    if (CST == mode)
+        EC_WRITE_S32(domainRx_pd + offset.target_velocity[slave_port], target_Torque);
+    else {
+        std::cout << "Assign action doesn't match current operation mode." << std::endl;
+        EC_WRITE_S8(domainRx_pd + offset.operation_mode[slave_port], CST);
+        EC_WRITE_S32(domainRx_pd + offset.target_velocity[slave_port], target_Torque);
+    }
+}
+
+void Assign_side_slaves_zero_Torque(bool side) {
+    if (left == side) {
+        Assign_slave_Torque(l_hip, 0);
+        Assign_slave_Torque(l_knee,0);
+        Assign_slave_Torque(l_ankle,0);
+    }else if(right == side){
+        Assign_slave_Torque(r_hip, 0);
+        Assign_slave_Torque(r_knee,0);
+        Assign_slave_Torque(r_ankle,0);
+    }
+}
+
+// -------------------------------------------------------
+// =================== Update Pos [cnt]=====================
+
+
+
 
 // =================== Thread   =======================
 
